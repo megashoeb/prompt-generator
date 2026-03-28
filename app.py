@@ -33,7 +33,7 @@ from prompt_engine import (
     infer_scene_context,
 )
 from styles import get_word_count_for_duration
-from output_writer import export_txt, export_xlsx, process_prompt_with_style, count_color_bw, count_noor_prompts, count_fire_accent_prompts
+from output_writer import export_txt, export_xlsx, process_prompt_with_style, count_color_bw, count_noor_prompts, count_fire_accent_prompts, validate_prompt_count
 from story_analyzer import run_story_analysis
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -409,6 +409,33 @@ async def _async_generation(gen_state: dict) -> None:
 
     gen_state["all_prompts"].sort(key=lambda x: x["block"])
 
+    # ── Post-generation: dedup + validate ─────────────────────────────────────
+    # Remove duplicates (keep last occurrence so retried blocks win)
+    _by_block: dict[int, dict] = {}
+    for _p in gen_state["all_prompts"]:
+        _by_block[_p["block"]] = _p
+    gen_state["all_prompts"] = sorted(_by_block.values(), key=lambda x: x["block"])
+
+    # Remove extra prompts (block numbers beyond expected range)
+    _total = gen_state.get("total_blocks", 0)
+    _expected_nums = gen_state.get("expected_block_numbers", set())
+    if _expected_nums:
+        _before_extra = len(gen_state["all_prompts"])
+        gen_state["all_prompts"] = [
+            _p for _p in gen_state["all_prompts"]
+            if _p["block"] in _expected_nums
+        ]
+        _removed = _before_extra - len(gen_state["all_prompts"])
+        if _removed > 0:
+            gen_state.setdefault("auto_fix_log", []).append(
+                f"Auto-removed {_removed} extra prompt(s) outside expected block range."
+            )
+
+    # Store validation result in gen_state for the results UI
+    gen_state["prompt_validation"] = validate_prompt_count(
+        gen_state["all_prompts"], _total
+    )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GENERATION UI (shown while is_generating == True)
@@ -780,52 +807,63 @@ def render_results_ui() -> None:
         with _wc3: st.metric("📈 Max Words", _max_wc)
         with _wc4: st.metric("🎯 In Range (±3)", f"{_acc}%")
 
-    # Stats
-    r1, r2, r3 = st.columns(3)
-    missing = total_blocks - len(all_prompts)
-    with r1: st.metric("✅ Generated",  len(all_prompts))
-    with r2: st.metric("📦 Expected",   total_blocks)
-    with r3: st.metric("⚠️ Missing",   f"{missing} {'✅' if missing == 0 else '⚠️'}")
+    # ── Count validation stats ────────────────────────────────────────────────
+    _validation = gen_state.get("prompt_validation") or validate_prompt_count(all_prompts, total_blocks)
+    _missing_list = _validation["missing"]
+    _extra_list   = _validation["extra"]
 
-    if missing > 0:
-        expected_nums = gen_state.get("expected_block_numbers", set())
-        got_nums      = {p["block"] for p in all_prompts}
-        missing_list  = sorted(expected_nums - got_nums)
-        st.warning(f"⚠️ Missing blocks: {missing_list}")
+    # Show auto-fix log if any extra prompts were removed automatically
+    for _log_msg in gen_state.get("auto_fix_log", []):
+        st.info(f"🔧 {_log_msg}")
 
-        rc1, rc2 = st.columns([1, 1])
-        with rc1:
-            if st.button(
-                "🔄 Retry Missing Prompts",
-                type="primary",
-                use_container_width=True,
-                key="retry_btn",
-            ):
-                gen_state["retry"] = {
-                    "status":         "running",
-                    "missing_blocks": missing_list,
-                    "live_text":      "",
-                    "response":       "",
-                    "error":          "",
-                }
-                t = threading.Thread(
-                    target=_retry_generation_thread,
-                    args=(gen_state,),
-                    daemon=True,
-                )
-                t.start()
-                st.rerun()
-        with rc2:
-            if st.button(
-                "🔄 Retry ALL (full regeneration)",
-                use_container_width=True,
-                key="retry_all_btn",
-            ):
-                gen_state["retry"] = None
-                st.session_state.gen_state = None
-                st.rerun()
+    r1, r2, r3, r4 = st.columns(4)
+    with r1: st.metric("✅ Generated",  _validation["generated"])
+    with r2: st.metric("📦 Expected",   _validation["expected"])
+    with r3: st.metric("⚠️ Missing",    len(_missing_list), delta=f"{'✅ Perfect' if not _missing_list else f'{len(_missing_list)} blocks'}", delta_color="off")
+    with r4: st.metric("➕ Extra",      len(_extra_list),   delta=f"{'✅ None' if not _extra_list else f'{len(_extra_list)} removed'}", delta_color="off")
+
+    if _validation["is_perfect"]:
+        st.success("✅ Perfect count — every subtitle block has exactly one prompt!")
     else:
-        st.success("✅ Perfect match — every subtitle block has a prompt!")
+        if _missing_list:
+            _miss_preview = str(_missing_list[:20]) + ("..." if len(_missing_list) > 20 else "")
+            st.warning(f"⚠️ {len(_missing_list)} missing prompt(s): blocks {_miss_preview}")
+
+        if _extra_list:
+            st.info(f"🔧 {len(_extra_list)} extra prompt(s) were auto-removed (blocks {_extra_list[:10]})")
+
+        if _missing_list:
+            rc1, rc2 = st.columns([1, 1])
+            with rc1:
+                if st.button(
+                    f"🔄 Retry {len(_missing_list)} Missing Prompts",
+                    type="primary",
+                    use_container_width=True,
+                    key="retry_btn",
+                ):
+                    gen_state["retry"] = {
+                        "status":         "running",
+                        "missing_blocks": _missing_list,
+                        "live_text":      "",
+                        "response":       "",
+                        "error":          "",
+                    }
+                    t = threading.Thread(
+                        target=_retry_generation_thread,
+                        args=(gen_state,),
+                        daemon=True,
+                    )
+                    t.start()
+                    st.rerun()
+            with rc2:
+                if st.button(
+                    "🔄 Retry ALL (full regeneration)",
+                    use_container_width=True,
+                    key="retry_all_btn",
+                ):
+                    gen_state["retry"] = None
+                    st.session_state.gen_state = None
+                    st.rerun()
 
     # Errors
     if gen_state.get("errors"):

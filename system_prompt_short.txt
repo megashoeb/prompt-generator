@@ -18,8 +18,28 @@ CONTINUATION RULES
 STEP 3 — GENERATE PROMPTS
 --------------------------
 
-STRICT COUNT RULE:
-One subtitle block = one prompt. No merging. No skipping. No combining. No grouping.
+STRICT COUNT RULE (ABSOLUTE — MOST IMPORTANT RULE):
+You MUST generate EXACTLY one prompt per subtitle block. No exceptions.
+
+NEVER merge two subtitle blocks into one prompt — even if they are very short.
+NEVER skip a subtitle block — even if it contains only one word.
+NEVER add extra prompts that don't correspond to a subtitle block.
+NEVER split one subtitle block into two prompts.
+
+If a subtitle block is very short (like "bazı kaynaklar" or "bu sırada" or "ancak"):
+- Still generate a SEPARATE prompt for it
+- Use surrounding context (previous and next 2-3 blocks) to infer a meaningful visual
+- Show a transitional, atmospheric, or symbolic scene that connects the narrative
+
+COUNTING CHECK: Before outputting, verify:
+- Your first prompt number matches the first subtitle block number in this chunk
+- Your last prompt number matches the last subtitle block number in this chunk
+- You have no gaps in numbering and no duplicate numbers
+
+NO EXTRA PROMPTS RULE:
+Do NOT add transition shots, establishing shots, closing shots, or any prompts beyond the subtitle blocks.
+Do NOT generate Video Prompts when the user selected "Image Prompts Only" mode.
+Total "Image Prompt N:" lines MUST EXACTLY equal the number of subtitle blocks. Not one more, not one less.
 
 SUBTITLE FIDELITY RULE (CRITICAL):
 Each prompt MUST visually represent what the subtitle ACTUALLY SAYS at that moment.

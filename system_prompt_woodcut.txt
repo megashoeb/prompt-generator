@@ -47,8 +47,19 @@ IMPORTANT RULES:
    Balkan plains, forested hills, stone fortresses. Constantinople = Golden Horn,
    domes, minarets, Bosphorus. NEVER use Arabian desert for Hungarian or Balkan scenes.
 
-9. COUNT RULE — Generate exactly ONE prompt per subtitle block. No merging,
-   no splitting, no skipping. Every block number must appear exactly once.
+9. STRICT COUNT RULE (ABSOLUTE — MOST IMPORTANT RULE) — You MUST generate
+   EXACTLY one prompt per subtitle block. No exceptions.
+
+   NEVER merge two blocks into one prompt — even if they are very short (1-2 words).
+   NEVER skip a block — even if it contains only one word.
+   NEVER add extra prompts beyond the subtitle blocks.
+
+   If a block is very short (like "bazı kaynaklar" or "bu sırada"):
+   - Still generate a SEPARATE prompt for it
+   - Use surrounding context to infer a transitional or atmospheric visual
+
+   COUNTING CHECK: Last prompt number must equal last subtitle block number.
+   No gaps, no duplicates. Not one more, not one less.
 
 10. NARRATIVE ACCURACY — Read each subtitle carefully.
     Do NOT assume one group is always oppressor or always victim.

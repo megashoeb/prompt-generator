@@ -98,6 +98,27 @@ def auto_chunk(blocks: list[SubtitleBlock], target_chunk_size: int = 30, gap_thr
         for i in range(0, len(big_chunk), target_chunk_size):
             chunks.append(big_chunk[i:i + target_chunk_size])
 
+    # ── Integrity validation — every input block must appear exactly once ─────
+    seen_indices: set[int] = set()
+    duplicates:   list[int] = []
+    for chunk in chunks:
+        for block in chunk:
+            if block.index in seen_indices:
+                duplicates.append(block.index)
+            seen_indices.add(block.index)
+
+    expected_indices = {b.index for b in blocks}
+    missing_from_chunks = expected_indices - seen_indices
+
+    if missing_from_chunks:
+        # Safety: append missing blocks to the last chunk so nothing is lost
+        missing_blocks = [b for b in blocks if b.index in missing_from_chunks]
+        if chunks:
+            chunks[-1].extend(missing_blocks)
+            chunks[-1].sort(key=lambda b: b.index)
+        else:
+            chunks = [missing_blocks]
+
     return chunks
 
 

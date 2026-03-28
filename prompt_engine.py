@@ -25,11 +25,19 @@ def load_system_prompt_short() -> str:
 
 def build_chunk1_message(srt_text: str, block_start: int, block_end: int, total_blocks: int, mode: str) -> str:
     mode_text = "Option A: Image Prompts Only" if mode == "A" else "Option B: Image + Video Prompts"
+    n_prompts = block_end - block_start + 1
     return f"""Selected mode: {mode_text}
 
 This is Chunk 1. The full SRT contains {total_blocks} subtitle blocks.
 Generate Image Prompt {block_start} through Image Prompt {block_end}.
-Exactly {block_end - block_start + 1} prompts.
+You MUST generate EXACTLY {n_prompts} prompts for this chunk.
+First prompt: Image Prompt {block_start}
+Last prompt: Image Prompt {block_end}
+Total prompts for this chunk: EXACTLY {n_prompts}
+
+Do NOT merge blocks. Do NOT skip blocks. Do NOT add extra prompts.
+Every subtitle block gets exactly ONE prompt — even single-word blocks.
+If a block is very short, use surrounding context to infer a transitional visual.
 
 IMPORTANT: You MUST output the full pre-analysis (Story Summary, Story Outline, Character Registry with Character Cards, Sacred Figure Protocol Tags, Scene Location Map, Color Grading Map) BEFORE generating any prompts. Do NOT skip the pre-analysis. If you skip the pre-analysis and jump directly to Image Prompt 1, your entire output is invalid.
 
@@ -51,11 +59,19 @@ def build_continuation_chunk_message(
     mode: str
 ) -> str:
     mode_text = "Option A: Image Prompts Only" if mode == "A" else "Option B: Image + Video Prompts"
+    n_prompts = block_end - block_start + 1
     return f"""Selected mode: {mode_text}
 
 This is Chunk {chunk_number} of {total_chunks}.
 Generate Image Prompt {block_start} through Image Prompt {block_end}.
-Exactly {block_end - block_start + 1} prompts.
+You MUST generate EXACTLY {n_prompts} prompts for this chunk.
+First prompt: Image Prompt {block_start}
+Last prompt: Image Prompt {block_end}
+Total prompts for this chunk: EXACTLY {n_prompts}
+
+Do NOT merge blocks. Do NOT skip blocks. Do NOT add extra prompts.
+Every subtitle block gets exactly ONE prompt — even single-word blocks.
+If a block is very short, use surrounding context to infer a transitional visual.
 
 Active Character Cards for this section:
 {character_cards}
@@ -108,22 +124,48 @@ def extract_last_prompt(response: str) -> str:
 
 
 def extract_all_prompts(response: str) -> list[dict]:
-    prompts = []
+    """Extract all prompts from LLM response using dict-keyed deduplication.
 
-    img_pattern = r'Image Prompt\s*(\d+)\s*:\s*(.*?)(?=(?:Video Prompt\s*\d+|Image Prompt\s*\d+|$))'
-    vid_pattern = r'Video Prompt\s*(\d+)\s*:\s*(.*?)(?=(?:Image Prompt\s*\d+|Video Prompt\s*\d+|$))'
+    Supports multiple prompt header formats:
+      'Image Prompt 1: ...'
+      'Prompt 1: ...'
+      'Prompt 1 – ...'   (em-dash variant)
+      'prompt 1 – ...'   (lowercase variant)
+    """
+    # ── Image prompts ─────────────────────────────────────────────────────────
+    img_patterns = [
+        r'Image\s+Prompt\s+(\d+)\s*[:–-]\s*(.*?)(?=(?:Video\s+Prompt\s*\d+|Image\s+Prompt\s*\d+|$))',
+        r'(?<!\w)Prompt\s+(\d+)\s*[:–-]\s*(.*?)(?=(?:Video\s+Prompt\s*\d+|(?<!\w)Prompt\s+\d+\s*[:–-]|$))',
+    ]
+    img_dict: dict[int, str] = {}
+    for pattern in img_patterns:
+        matches = re.findall(pattern, response, re.DOTALL | re.IGNORECASE)
+        if matches:
+            for num_str, text in matches:
+                num = int(num_str)
+                cleaned = clean_prompt_text(text.strip())
+                if cleaned and len(cleaned) > 15:   # skip empty/noise extractions
+                    if num not in img_dict:           # first occurrence wins
+                        img_dict[num] = cleaned
+            break  # stop at first pattern that yields results
 
-    img_matches = re.findall(img_pattern, response, re.DOTALL | re.IGNORECASE)
+    # ── Video prompts ─────────────────────────────────────────────────────────
+    vid_pattern = r'Video\s+Prompt\s*(\d+)\s*[:–-]\s*(.*?)(?=(?:Image\s+Prompt\s*\d+|Video\s+Prompt\s*\d+|$))'
     vid_matches = re.findall(vid_pattern, response, re.DOTALL | re.IGNORECASE)
+    vid_dict: dict[int, str] = {}
+    for num_str, text in vid_matches:
+        num = int(num_str)
+        cleaned = clean_prompt_text(text.strip())
+        if cleaned and num not in vid_dict:
+            vid_dict[num] = cleaned
 
-    vid_dict = {int(num): text.strip() for num, text in vid_matches}
-
-    for num, text in img_matches:
-        block_num = int(num)
+    # ── Build sorted list ─────────────────────────────────────────────────────
+    prompts = []
+    for num in sorted(img_dict.keys()):
         prompts.append({
-            "block": block_num,
-            "image_prompt": clean_prompt_text(text.strip()),
-            "video_prompt": clean_prompt_text(vid_dict.get(block_num, ""))
+            "block": num,
+            "image_prompt": img_dict[num],
+            "video_prompt": vid_dict.get(num, ""),
         })
 
     return prompts
@@ -194,7 +236,11 @@ def build_chunk1_message_woodcut(
 
     return (
         f"Generate Image Prompt {block_start} through Image Prompt {block_end}.\n"
-        f"Exactly {n_prompts} prompts.\n"
+        f"You MUST generate EXACTLY {n_prompts} prompts for this chunk.\n"
+        f"First prompt: Image Prompt {block_start}\n"
+        f"Last prompt: Image Prompt {block_end}\n"
+        f"Do NOT merge blocks. Do NOT skip blocks. Do NOT add extra prompts.\n"
+        f"Every subtitle block gets exactly ONE prompt — even single-word blocks.\n"
         f"\nSTYLE: Short description only — 60-72 words per prompt. "
         f"No style keywords. No pre-analysis. No headers.\n"
         f"Start your response directly with: Image Prompt {block_start}:\n"
@@ -242,7 +288,11 @@ def build_continuation_chunk_message_woodcut(
     return (
         f"This is Chunk {chunk_number} of {total_chunks}.\n"
         f"Generate Image Prompt {block_start} through Image Prompt {block_end}.\n"
-        f"Exactly {n_prompts} prompts.\n"
+        f"You MUST generate EXACTLY {n_prompts} prompts for this chunk.\n"
+        f"First prompt: Image Prompt {block_start}\n"
+        f"Last prompt: Image Prompt {block_end}\n"
+        f"Do NOT merge blocks. Do NOT skip blocks. Do NOT add extra prompts.\n"
+        f"Every subtitle block gets exactly ONE prompt — even single-word blocks.\n"
         f"\nSTYLE: Short description only — 60-72 words per prompt. "
         f"No style keywords. Include a facial expression for every visible character.\n"
         f"{section_note}"

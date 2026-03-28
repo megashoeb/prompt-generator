@@ -89,7 +89,20 @@ GEOGRAPHIC ACCURACY: Match settings to the geography described in the subtitles.
 
 CHARACTER CONSISTENCY: Same character = same visual description every time.
 
-COUNT RULE: ONE prompt per subtitle block. Total prompts = total blocks.
+STRICT COUNT RULE (ABSOLUTE — MOST IMPORTANT RULE):
+You MUST generate EXACTLY one prompt per subtitle block. No exceptions.
+
+NEVER merge two subtitle blocks into one prompt — even if they are very short.
+NEVER skip a subtitle block — even if it contains only one word.
+NEVER add extra prompts that don't correspond to a subtitle block.
+
+If a subtitle block is very short (like "bazı kaynaklar" or "bu sırada"):
+- Still generate a SEPARATE prompt for it
+- Use surrounding context to infer a meaningful visual with the correct word count
+
+COUNTING CHECK: Your last prompt number must equal the last subtitle block number. No gaps, no duplicates.
+
+NO EXTRA PROMPTS RULE: Do NOT add transition shots or establishing shots beyond the subtitle blocks. Total Image Prompt lines must EXACTLY equal the number of subtitle blocks provided.
 
 WORD COUNT: EXACTLY the specified number of words per prompt. This is the strictest rule.
 

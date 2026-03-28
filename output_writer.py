@@ -177,6 +177,31 @@ def clean_prompt_text(text: str) -> str:
     return text.strip()
 
 
+def validate_prompt_count(prompts_list: list[dict], total_expected: int) -> dict:
+    """Validate generated prompt count against expected total.
+
+    Args:
+        prompts_list: list of prompt dicts with 'block' key
+        total_expected: total number of SRT subtitle blocks
+
+    Returns:
+        dict with keys: expected, generated, missing (list), extra (list), is_perfect (bool)
+    """
+    expected_set  = set(range(1, total_expected + 1))
+    generated_set = set(p["block"] for p in prompts_list)
+
+    missing = sorted(expected_set - generated_set)
+    extra   = sorted(generated_set - expected_set)
+
+    return {
+        "expected":   total_expected,
+        "generated":  len(generated_set),
+        "missing":    missing,
+        "extra":      extra,
+        "is_perfect": len(missing) == 0 and len(extra) == 0,
+    }
+
+
 def export_txt(prompts: list[dict], mode: str) -> str:
     lines = []
     for p in prompts:

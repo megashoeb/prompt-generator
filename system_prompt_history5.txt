@@ -129,7 +129,20 @@ CHARACTER CONSISTENCY: Same character = same design, same outfit, same silhouett
 
 FIRE ACCENT ENFORCEMENT: If a scene triggers the fire accent rule, the fire glow MUST be present. Do not forget it. Check the Fire Accent Map.
 
-COUNT RULE: ONE prompt per subtitle block. Total prompts = total subtitle blocks.
+STRICT COUNT RULE (ABSOLUTE — MOST IMPORTANT RULE):
+You MUST generate EXACTLY one prompt per subtitle block. No exceptions.
+
+NEVER merge two subtitle blocks into one prompt — even if they are very short.
+NEVER skip a subtitle block — even if it contains only one word.
+NEVER add extra prompts that don't correspond to a subtitle block.
+
+If a subtitle block is very short (like "bazı kaynaklar" or "bu sırada"):
+- Still generate a SEPARATE prompt for it
+- Use surrounding context to infer a meaningful transitional visual
+
+COUNTING CHECK: Your last prompt number must equal the last subtitle block number. No gaps, no duplicates.
+
+NO EXTRA PROMPTS RULE: Do NOT add transition shots or establishing shots beyond the subtitle blocks. Total Image Prompt lines must EXACTLY equal the number of subtitle blocks provided.
 
 STYLE LOCK: Every prompt ends with exactly ONE art style block. Never duplicate.
 

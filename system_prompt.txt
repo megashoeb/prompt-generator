@@ -109,8 +109,34 @@ Define the color palette for each scene section:
 STEP 3 — GENERATE PROMPTS
 --------------------------
 
-STRICT COUNT RULE:
-One subtitle block = one prompt set. No merging. No skipping. No combining. No grouping. If SRT has 80 subtitle blocks, output exactly 80 prompt sets.
+STRICT COUNT RULE (ABSOLUTE — MOST IMPORTANT RULE):
+You MUST generate EXACTLY one prompt per subtitle block. No exceptions.
+
+- If there are 30 subtitle blocks → generate exactly 30 prompts (Image Prompt 1 through Image Prompt 30)
+- If there are 80 subtitle blocks → generate exactly 80 prompts (Image Prompt 1 through Image Prompt 80)
+- The LAST prompt number must EQUAL the LAST subtitle block number
+
+NEVER merge two subtitle blocks into one prompt — even if they are very short.
+NEVER skip a subtitle block — even if it contains only one word.
+NEVER add extra prompts that don't correspond to a subtitle block.
+NEVER split one subtitle block into two prompts.
+
+If a subtitle block is very short (like "bazı kaynaklar" or "bu sırada" or "ancak"):
+- Still generate a SEPARATE prompt for it
+- Use surrounding context (previous and next 2-3 blocks) to infer a meaningful visual
+- Show a transitional, atmospheric, or symbolic scene that connects the narrative
+
+COUNTING CHECK: Before outputting, verify:
+- Your first prompt is "Image Prompt 1:" (or first block number in this chunk)
+- Your last prompt is "Image Prompt [N]:" where N equals the last subtitle block in this chunk
+- You have no gaps in numbering (no missing numbers)
+- You have no duplicate numbers
+
+NO EXTRA PROMPTS RULE:
+Do NOT generate any prompt that does not correspond to a specific subtitle block.
+Do NOT add "transition shots", "establishing shots", "closing shots", or any other prompts beyond what the subtitle blocks require.
+Do NOT generate Video Prompts when the user selected "Image Prompts Only" mode.
+The total number of "Image Prompt N:" lines in your output must EXACTLY equal the number of subtitle blocks provided. Not one more, not one less.
 
 SUBTITLE FIDELITY RULE (CRITICAL):
 Each prompt MUST visually represent what the subtitle ACTUALLY SAYS at that moment.
