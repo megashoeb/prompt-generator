@@ -1068,6 +1068,227 @@ def render_results_ui() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# HOW TO USE PAGE
+# ─────────────────────────────────────────────────────────────────────────────
+
+def render_how_to_use() -> None:
+    st.markdown("## 📖 How to Use — Mythology Prompt Generator")
+    st.caption("Complete guide to getting started and generating AI image prompts from SRT subtitles.")
+    st.divider()
+
+    # ── Step 1: Get API Key ───────────────────────────────────────────────────
+    st.markdown("### 🔑 Step 1 — Get Your Free API Key")
+    st.info(
+        "This tool uses **OpenRouter** to access the AI model. "
+        "OpenRouter gives you a **free API key** that includes free model access."
+    )
+    with st.expander("📋 How to get a free OpenRouter API key (click to expand)", expanded=True):
+        st.markdown("""
+**Follow these steps:**
+
+1. 🌐 Open **[https://openrouter.ai](https://openrouter.ai)** in your browser
+
+2. 👤 Click **"Sign In"** → Sign up with Google, GitHub, or email (free — no credit card needed)
+
+3. 🔑 After logging in, go to **[https://openrouter.ai/keys](https://openrouter.ai/keys)**
+
+4. ➕ Click **"Create Key"** → give it any name → click **"Create"**
+
+5. 📋 **Copy the key** — it starts with `sk-or-v1-...`
+
+6. 🔒 Paste it into the **"OpenRouter API Key"** field in the left sidebar
+
+> ✅ The free tier includes access to **Step 3.5 Flash** (the default model used by this tool).
+> No payment required for basic usage.
+""")
+
+    st.divider()
+
+    # ── Step 2: Prepare SRT ──────────────────────────────────────────────────
+    st.markdown("### 📄 Step 2 — Prepare Your SRT File")
+    with st.expander("What is an SRT file?", expanded=False):
+        st.markdown("""
+An **SRT file** (.srt) is a subtitle file format. It contains numbered blocks of text with timestamps:
+
+```
+1
+00:00:01,000 --> 00:00:04,000
+In the year 1453, Constantinople fell.
+
+2
+00:00:05,000 --> 00:00:09,500
+The Ottoman sultan Mehmed II led the final siege.
+
+3
+00:00:10,000 --> 00:00:14,000
+After 53 days, the great city was taken.
+```
+
+Each block has:
+- **A number** (block index)
+- **Timestamps** (start → end)
+- **Subtitle text** (the narration)
+
+You can upload `.srt` or `.txt` files — or paste the SRT text directly.
+""")
+
+    with st.expander("How to export SRT from your video editor / YouTube", expanded=False):
+        st.markdown("""
+**From YouTube Studio:**
+- Go to your video → **Subtitles** → Download SRT
+
+**From Premiere Pro / DaVinci Resolve:**
+- Export → choose **SubRip (.srt)** format
+
+**From a script/text document:**
+- Each paragraph of narration = one subtitle block
+- Use a free tool like **[Subtitle Edit](https://www.nikse.dk/subtitleedit)** to create SRT from text
+""")
+
+    st.divider()
+
+    # ── Step 3: Configure & Generate ─────────────────────────────────────────
+    st.markdown("### ⚙️ Step 3 — Configure Settings")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("""
+**📥 Input**
+- **Upload SRT** — drag & drop your `.srt` file into the upload box
+- **Paste SRT** — switch to the Paste tab and paste text directly
+
+**🎨 Visual Style**
+- Pick from 9 styles in the sidebar (see Style Guide below)
+- Each style produces a different artistic look for the prompts
+
+**📤 Output Mode**
+- **Mode A** — Image prompts only (for AI image generators like Midjourney, Flux)
+- **Mode B** — Image + Video prompts (for video generators like Kling, Runway)
+""")
+    with col2:
+        st.markdown("""
+**🔧 Advanced Settings**
+- **Chunk Size** — how many subtitle blocks per API call (default: 30)
+- **Parallel Tasks** — how many chunks to process at the same time (default: 3)
+  - Higher = faster but may hit rate limits on free tier
+  - Recommended: 2–3 for free API key
+
+**🔑 Multiple API Keys**
+- Paste multiple keys (one per line) in the "Advanced: Multiple API Keys" section
+- More keys = more parallel capacity = faster generation
+""")
+
+    st.divider()
+
+    # ── Step 4: Generate ─────────────────────────────────────────────────────
+    st.markdown("### 🎬 Step 4 — Generate & Download")
+    st.markdown("""
+1. ✅ API key entered → SRT uploaded → style selected → click **"🎬 Generate Prompts"**
+
+2. 🧠 **Story Analysis** runs first (~15–30 sec) — reads the full SRT and creates a Master Story Plan so all chunks stay visually consistent
+
+3. 📦 **Chunk 1** generates first (includes character cards + scene analysis)
+
+4. ⚡ **Remaining chunks** generate in parallel
+
+5. ✅ When complete, you can:
+   - **📋 Copy All** — copy to clipboard
+   - **⬇️ .txt** — plain text download
+   - **⬇️ .xlsx** — Excel spreadsheet with formatting
+   - **🔄 Retry Missing** — if any blocks were skipped, retry them automatically
+""")
+
+    st.divider()
+
+    # ── Style Guide ──────────────────────────────────────────────────────────
+    st.markdown("### 🎨 Visual Style Guide")
+    styles_data = [
+        ("🎨", "Dark Fantasy Oil Painting", "Hyper-detailed digital painting, dramatic chiaroscuro, rich oil paint textures.", "Mythology, epic battles, dark stories, fantasy worlds"),
+        ("🏛️", "History 1 — Museum Parchment", "Hand-painted oil on aged parchment, museum artifact look, craquelure texture, warm ochre palette.", "Ancient history, empires, civilizations, documentary channels"),
+        ("🎬", "History 2 — Documentary Dual Tone", "Auto Color/B&W per scene — oil-paint realism for biography, charcoal monochrome for war/tragedy.", "Biography channels, history documentaries, dual-tone storytelling"),
+        ("🌙", "History 3 — Impasto Mystical", "Thick impasto oil painting, magical realism, lapis lazuli skies. Special Noor rule for Islamic sacred figures.", "Ancient mysteries, lost civilizations, Islamic history, mythology"),
+        ("🏺", "History 4 — Ancient Fresco", "Ancient fresco / carved relief / illuminated manuscript. Midnight blues + muted gold. Duration-based word count.", "Sleep/ambient videos, ancient mysteries, reverent tone, calm storytelling"),
+        ("✏️", "History 5 — 2D Animated Storyboard", "Hand-drawn 2D animation, clean ink outlines, painterly backgrounds. Mandatory fire glow for night scenes.", "Story-driven documentaries, animated history, campfire narrative tone"),
+        ("🪵", "Woodcut / Linocut", "Bold thick ink outlines, flat color fills, dramatic closeups, relief print aesthetic.", "Historical documentaries, war, ancient civilizations, stark drama"),
+        ("📰", "Victorian Engraving", "Fine crosshatching on aged parchment, newspaper illustration style, 19th century look.", "Victorian era, colonial history, 19th century, exploration narratives"),
+        ("✏️", "Custom Style", "Define your own style — anime, comic book, watercolor, Studio Ghibli, etc.", "Any style not covered above"),
+    ]
+    for icon, name, desc, best_for in styles_data:
+        with st.expander(f"{icon} {name}", expanded=False):
+            st.markdown(f"**Description:** {desc}")
+            st.markdown(f"**Best for:** {best_for}")
+
+    st.divider()
+
+    # ── FAQ ───────────────────────────────────────────────────────────────────
+    st.markdown("### ❓ Frequently Asked Questions")
+
+    with st.expander("Why am I getting 429 errors / rate limit errors?", expanded=False):
+        st.markdown("""
+The free OpenRouter tier has rate limits. Solutions:
+- **Lower Parallel Tasks** to 1–2 in the sidebar
+- **Add more API keys** in "Advanced: Multiple API Keys" (you can create multiple free keys)
+- **Wait 60 seconds** and click "Retry Missing" to recover any skipped blocks
+""")
+
+    with st.expander("The prompt count doesn't match my SRT block count — what do I do?", expanded=False):
+        st.markdown("""
+After generation, if counts don't match:
+1. The tool shows **⚠️ Missing X prompts** with the exact block numbers
+2. Click **"🔄 Retry Missing Prompts"** — it will regenerate only the missing blocks
+3. If still missing, click **"Retry ALL (full regeneration)"** to start fresh
+""")
+
+    with st.expander("What AI models are supported?", expanded=False):
+        st.markdown("""
+Currently the tool uses **Step 3.5 Flash** (by Stepfun) via OpenRouter — it's free, fast, and produces high-quality prompts.
+
+Other models can be added — the model selector in the sidebar will be expanded in future updates.
+""")
+
+    with st.expander("Can I use this for non-mythology content?", expanded=False):
+        st.markdown("""
+Yes! Despite the name, this tool works for **any** narrated documentary content:
+- History documentaries
+- Educational videos
+- Travel/nature documentaries
+- Biography channels
+- Any SRT-based video project
+
+The "style" setting determines the visual look — choose the one that fits your content.
+""")
+
+    with st.expander("What's the Master Story Plan?", expanded=False):
+        st.markdown("""
+Before generating prompts, the tool analyzes your **entire SRT** to create a **Master Story Plan** — a structured document with:
+- **Narrative phases** (introduction, backstory, battle, aftermath, etc.)
+- **Character registry** (consistent visual descriptions for every named character)
+- **Scene location map** (which blocks are set where)
+- **Visual mood progression** (how lighting and color should evolve)
+
+This plan is given to **every chunk** so they all produce visually consistent prompts — even when processing in parallel.
+
+The plan is **cached** — if you re-generate with the same SRT, the analysis step is skipped.
+""")
+
+    with st.expander("Is my API key stored or sent anywhere?", expanded=False):
+        st.markdown("""
+Your API key is used **only** to make direct API calls to OpenRouter. It is:
+- ✅ Never stored on any server
+- ✅ Never logged or saved
+- ✅ Sent only to OpenRouter's API endpoint (api.openrouter.ai)
+- ✅ Lives only in your browser session (cleared when you close the tab)
+""")
+
+    st.divider()
+    st.markdown("""
+    <div style="text-align:center; color:#888; font-size:13px; padding:10px 0;">
+    🎬 Mythology Prompt Generator · Built with Streamlit · Powered by OpenRouter<br>
+    <a href="https://openrouter.ai/keys" style="color:#ff4b4b;">Get your free API key →</a>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # SESSION STATE INIT
 # ─────────────────────────────────────────────────────────────────────────────
 for _k, _v in {
@@ -1082,6 +1303,18 @@ for _k, _v in {
 # SIDEBAR
 # ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # ── Page navigation ───────────────────────────────────────────────────────
+    st.markdown("### 📌 Navigation")
+    _nav_page = st.radio(
+        "",
+        ["🎬 Generator", "📖 How to Use"],
+        index=0,
+        horizontal=True,
+        label_visibility="collapsed",
+        key="nav_page",
+    )
+    st.divider()
+
     st.header("⚙️ Settings")
 
     api_key  = st.text_input("OpenRouter API Key", type="password", placeholder="sk-or-…")
@@ -1202,8 +1435,15 @@ with st.sidebar:
 # HEADER
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("<h1>🎬 Mythology Prompt Generator</h1>", unsafe_allow_html=True)
-st.caption("SRT → Nano Banana Image Prompts  |  Powered by Step 3.5 Flash")
+st.caption("SRT → AI Image Prompts  |  Powered by Step 3.5 Flash")
 st.divider()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAGE ROUTING — How to Use
+# ─────────────────────────────────────────────────────────────────────────────
+if st.session_state.get("nav_page") == "📖 How to Use":
+    render_how_to_use()
+    st.stop()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GENERATING STATE — hijack entire page
