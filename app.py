@@ -1039,18 +1039,33 @@ if st.session_state.gen_state and st.session_state.gen_state.get("done"):
 # ─────────────────────────────────────────────────────────────────────────────
 # IDLE STATE — upload + configure + generate
 # ─────────────────────────────────────────────────────────────────────────────
-uploaded_file = st.file_uploader("📁 Upload SRT File", type=["srt", "txt"])
+tab_upload, tab_paste = st.tabs(["📁 Upload SRT File", "📋 Paste SRT Text"])
 
-if not uploaded_file:
-    st.info("📁 Upload an SRT file to get started.")
+with tab_upload:
+    uploaded_file = st.file_uploader("Upload your SRT file", type=["srt", "txt"], label_visibility="collapsed")
+
+with tab_paste:
+    pasted_text = st.text_area(
+        "Paste your SRT content here",
+        height=250,
+        placeholder="1\n00:00:01,000 --> 00:00:04,000\nYour subtitle text here\n\n2\n00:00:05,000 --> 00:00:08,000\nNext subtitle block...",
+        label_visibility="collapsed",
+    )
+
+# Determine srt_content from whichever input was used
+srt_content = None
+if uploaded_file:
+    srt_content = uploaded_file.read().decode("utf-8", errors="ignore")
+elif pasted_text and pasted_text.strip():
+    srt_content = pasted_text.strip()
+
+if not srt_content:
+    st.info("📁 Upload an SRT file — or paste SRT text directly using the Paste tab.")
     st.stop()
 
 if not api_keys:
     st.warning("🔑 Enter your OpenRouter API key in the sidebar.")
     st.stop()
-
-# Parse SRT
-srt_content = uploaded_file.read().decode("utf-8", errors="ignore")
 blocks = parse_srt(srt_content)
 if not blocks:
     st.error("❌ No valid subtitle blocks found. Check your SRT format.")
