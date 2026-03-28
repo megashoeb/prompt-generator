@@ -45,7 +45,7 @@ from story_analyzer import (
 # PAGE CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Mythology Prompt Generator",
+    page_title="Prompt Generator by MegaShoeb",
     page_icon="🎬",
     layout="wide",
 )
@@ -1072,7 +1072,7 @@ def render_results_ui() -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def render_how_to_use() -> None:
-    st.markdown("## 📖 How to Use — Mythology Prompt Generator")
+    st.markdown("## 📖 How to Use — Prompt Generator by MegaShoeb")
     st.caption("Complete guide to getting started and generating AI image prompts from SRT subtitles.")
     st.divider()
 
@@ -1168,13 +1168,72 @@ You can upload `.srt` or `.txt` files — or paste the SRT text directly.
         st.markdown("""
 **🔧 Advanced Settings**
 - **Chunk Size** — how many subtitle blocks per API call (default: 30)
-- **Parallel Tasks** — how many chunks to process at the same time (default: 3)
-  - Higher = faster but may hit rate limits on free tier
-  - Recommended: 2–3 for free API key
+- **Parallel Tasks** — how many chunks run at the same time (default: 3)
+  - Higher = faster but may cause 429 rate-limit errors on free tier
+  - Recommended: **2–3** with one free key
 
 **🔑 Multiple API Keys**
-- Paste multiple keys (one per line) in the "Advanced: Multiple API Keys" section
-- More keys = more parallel capacity = faster generation
+- Open **"Advanced: Multiple API Keys"** in the sidebar
+- Paste one key per line — each key gets its own rate-limit quota
+- More keys = more parallel capacity = much faster generation
+""")
+
+    st.divider()
+
+    # ── Multiple API Keys + Parallel Tasks deep dive ──────────────────────────
+    st.markdown("### ⚡ Speed Up — Multiple API Keys & Parallel Tasks")
+    st.info("Using multiple free OpenRouter keys is the **fastest** way to generate prompts for long SRTs (200–500+ blocks).")
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("""
+**🔑 How to add multiple API keys:**
+
+1. Go to **[openrouter.ai/keys](https://openrouter.ai/keys)**
+2. Click **"Create Key"** — create 3–5 keys (all free)
+3. Name them: `Key 1`, `Key 2`, `Key 3` etc.
+4. In the sidebar → open **"🔑 Advanced: Multiple API Keys"**
+5. Paste all keys — **one per line:**
+```
+sk-or-v1-abc123...
+sk-or-v1-def456...
+sk-or-v1-ghi789...
+```
+6. Click **"🔍 Validate Keys"** to confirm all keys work
+7. Now generation uses all keys in parallel — 3x faster!
+""")
+
+    with col_b:
+        st.markdown("""
+**⚡ How Parallel Tasks work:**
+
+Each chunk of subtitle blocks is sent to the AI as a separate task. Parallel Tasks = how many chunks run **at the same time**.
+
+| Keys | Parallel Tasks | Speed |
+|------|---------------|-------|
+| 1 key | 2–3 | Normal |
+| 2 keys | 4–6 | 2× faster |
+| 3 keys | 6–9 | 3× faster |
+| 5 keys | 10–15 | 5× faster |
+
+**Rule of thumb:**
+- Set **Parallel Tasks = (number of keys) × 2–3**
+- Example: 3 keys → set Parallel Tasks to 6–9
+- Each key handles ~2–3 parallel tasks safely on free tier
+
+⚠️ Setting too high causes **429 rate-limit errors** — the tool will auto-retry, but it slows things down.
+""")
+
+    with st.expander("📊 Example: 300-block SRT generation time estimate", expanded=False):
+        st.markdown("""
+| Setup | Chunks | Parallel | Est. Time |
+|-------|--------|----------|-----------|
+| 1 key, 2 parallel | 10 chunks | 2 at a time | ~8–12 min |
+| 2 keys, 4 parallel | 10 chunks | 4 at a time | ~4–6 min |
+| 3 keys, 6 parallel | 10 chunks | 6 at a time | ~2–4 min |
+| 5 keys, 10 parallel | 10 chunks | all at once | ~1–2 min |
+
+*Estimates based on 30-block chunk size. Actual time varies with model load.*
 """)
 
     st.divider()
@@ -1282,7 +1341,7 @@ Your API key is used **only** to make direct API calls to OpenRouter. It is:
     st.divider()
     st.markdown("""
     <div style="text-align:center; color:#888; font-size:13px; padding:10px 0;">
-    🎬 Mythology Prompt Generator · Built with Streamlit · Powered by OpenRouter<br>
+    🎬 Prompt Generator by MegaShoeb · Built with Streamlit · Powered by OpenRouter<br>
     <a href="https://openrouter.ai/keys" style="color:#ff4b4b;">Get your free API key →</a>
     </div>
     """, unsafe_allow_html=True)
@@ -1434,7 +1493,7 @@ with st.sidebar:
 # ─────────────────────────────────────────────────────────────────────────────
 # HEADER
 # ─────────────────────────────────────────────────────────────────────────────
-st.markdown("<h1>🎬 Mythology Prompt Generator</h1>", unsafe_allow_html=True)
+st.markdown("<h1>🎬 Prompt Generator <span style='color:#ff4b4b;'>by MegaShoeb</span></h1>", unsafe_allow_html=True)
 st.caption("SRT → AI Image Prompts  |  Powered by Step 3.5 Flash")
 st.divider()
 
