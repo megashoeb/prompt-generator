@@ -34,7 +34,12 @@ from prompt_engine import (
 )
 from styles import get_word_count_for_duration
 from output_writer import export_txt, export_xlsx, process_prompt_with_style, count_color_bw, count_noor_prompts, count_fire_accent_prompts, validate_prompt_count
-from story_analyzer import run_story_analysis
+from story_analyzer import (
+    run_story_analysis,
+    run_master_plan_analysis_async,
+    compress_srt_blocks_for_analysis,
+    get_srt_blocks_hash,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -72,6 +77,50 @@ def calc_est(chunks: list, max_par: int) -> float:
     rounds = math.ceil(len(cont) / max_par)
     avg = sum(len(c) for c in cont) / len(cont)
     return c1 + rounds * (avg * 350 / 38)
+
+
+def check_visual_consistency(prompts_dict: dict, master_plan: str) -> list[str]:
+    """Flag prompts that may break visual consistency based on the Master Story Plan.
+
+    Returns a list of warning strings (empty list = no issues found).
+    """
+    if not master_plan or not prompts_dict:
+        return []
+
+    warnings = []
+    european_blocks: set[int] = set()
+    desert_blocks:   set[int] = set()
+
+    for line in master_plan.split("\n"):
+        ll = line.lower()
+        m  = re.search(r'blocks?\s*(\d+)\s*[-–to]+\s*(\d+)', ll)
+        if not m:
+            continue
+        start, end = int(m.group(1)), int(m.group(2))
+        block_range = set(range(start, end + 1))
+        if any(w in ll for w in ("european", "hungarian", "castle", "gothic", "balkan",
+                                  "central europe", "eastern europe", "byzantine")):
+            european_blocks.update(block_range)
+        if any(w in ll for w in ("desert", "arabian", "sahara", "bedouin", "sand dune")):
+            desert_blocks.update(block_range)
+
+    for num, prompt in prompts_dict.items():
+        pl = prompt.lower()
+        if num in european_blocks:
+            if any(w in pl for w in ("desert", "sand dune", "arabian desert", "oasis", "camel caravan")):
+                warnings.append(
+                    f"Block {num}: Master Plan says European setting, "
+                    f"but prompt contains desert imagery."
+                )
+        if num in desert_blocks:
+            if any(w in pl for w in ("gothic castle", "stone castle", "european countryside",
+                                      "central european plains")):
+                warnings.append(
+                    f"Block {num}: Master Plan says desert/Arabian setting, "
+                    f"but prompt contains European castle imagery."
+                )
+
+    return warnings
 
 
 def copy_btn(text: str, label: str = "📋 Copy All Prompts", height: int = 52):
@@ -181,7 +230,7 @@ def _generation_thread(gen_state: dict) -> None:
 
 
 async def _async_generation(gen_state: dict) -> None:
-    """Main async orchestration — chunk 1 then parallel continuation chunks."""
+    """Main async orchestration — step 0: story analysis, then chunk 1, then parallel chunks."""
     api_keys       = gen_state["api_keys"]
     model          = gen_state["model"]
     chunks         = gen_state["chunks"]
@@ -203,6 +252,45 @@ async def _async_generation(gen_state: dict) -> None:
         sys_full  = load_system_prompt_for_style(visual_style)
         sys_short = sys_full   # same file for all chunks
 
+    # ── STEP 0: MASTER STORY PLAN ANALYSIS ───────────────────────────────────
+    # Run once before any chunks. Produces a plan that every chunk receives.
+    all_blocks_flat = [b for chunk in chunks for b in chunk]
+    master_plan = gen_state.get("master_story_plan", "")   # pre-filled if cached
+
+    if not master_plan:
+        gen_state["analysis_status"]  = "running"
+        gen_state["analysis_message"] = (
+            f"Analyzing {len(all_blocks_flat)} subtitle blocks for story structure..."
+        )
+        try:
+            compressed = compress_srt_blocks_for_analysis(all_blocks_flat)
+            master_plan = await run_master_plan_analysis_async(
+                api_keys[0], model, compressed, len(all_blocks_flat)
+            )
+            if master_plan:
+                gen_state["master_story_plan"]  = master_plan
+                gen_state["analysis_status"]    = "done"
+                gen_state["analysis_message"]   = (
+                    f"Master Story Plan created ({len(master_plan)} chars) — "
+                    f"all chunks will follow it."
+                )
+                gen_state["save_master_plan"]   = True  # main thread will cache this
+            else:
+                gen_state["analysis_status"]  = "failed"
+                gen_state["analysis_message"] = (
+                    "Story analysis failed — generating without Master Plan (fallback mode)."
+                )
+        except Exception as _ae:
+            gen_state["analysis_status"]  = "failed"
+            gen_state["analysis_message"] = f"Analysis error: {_ae} — continuing without plan."
+            master_plan = ""
+    else:
+        gen_state["analysis_status"]  = "cached"
+        gen_state["analysis_message"] = "Using cached Master Story Plan from previous run."
+
+    if gen_state.get("stop_requested"):
+        return
+
     # ── CHUNK 1 ──────────────────────────────────────────────────────────────
     chunk1 = chunks[0]
     exp1   = chunk1[-1].index - chunk1[0].index + 1
@@ -214,25 +302,28 @@ async def _async_generation(gen_state: dict) -> None:
 
     if _is_history4:
         chunk1_msg = build_chunk1_message_history4(
-            chunk        = chunk1,
-            total_blocks = gen_state["total_blocks"],
-            mode         = mode_code,
+            chunk              = chunk1,
+            total_blocks       = gen_state["total_blocks"],
+            mode               = mode_code,
+            master_story_plan  = master_plan,
         )
     elif _is_short_style:
         chunk1_msg = build_chunk1_message_woodcut(
-            srt_text    = format_chunk_for_api(chunk1),
-            block_start = chunk1[0].index,
-            block_end   = chunk1[-1].index,
-            total_blocks= gen_state["total_blocks"],
-            mode        = mode_code,
+            srt_text          = format_chunk_for_api(chunk1),
+            block_start       = chunk1[0].index,
+            block_end         = chunk1[-1].index,
+            total_blocks      = gen_state["total_blocks"],
+            mode              = mode_code,
+            master_story_plan = master_plan,
         )
     else:
         chunk1_msg = build_chunk1_message(
-            srt_text    = format_chunk_for_api(chunk1),
-            block_start = chunk1[0].index,
-            block_end   = chunk1[-1].index,
-            total_blocks= gen_state["total_blocks"],
-            mode        = mode_code,
+            srt_text          = format_chunk_for_api(chunk1),
+            block_start       = chunk1[0].index,
+            block_end         = chunk1[-1].index,
+            total_blocks      = gen_state["total_blocks"],
+            mode              = mode_code,
+            master_story_plan = master_plan,
         )
         if visual_style == "custom" and custom_style:
             chunk1_msg += (
@@ -309,37 +400,40 @@ async def _async_generation(gen_state: dict) -> None:
         }
         if _is_history4:
             msg = build_continuation_chunk_message_history4(
-                chunk           = chunk,
-                chunk_number    = i,
-                total_chunks    = len(chunks),
-                character_cards = gen_state["character_cards"],
-                last_prompt     = gen_state["last_prompt"],
-                total_blocks    = gen_state["total_blocks"],
-                mode            = mode_code,
+                chunk              = chunk,
+                chunk_number       = i,
+                total_chunks       = len(chunks),
+                character_cards    = gen_state["character_cards"],
+                last_prompt        = gen_state["last_prompt"],
+                total_blocks       = gen_state["total_blocks"],
+                mode               = mode_code,
+                master_story_plan  = master_plan,
             )
         elif _is_short_style:
             msg = build_continuation_chunk_message_woodcut(
-                srt_text        = format_chunk_for_api(chunk),
-                chunk_number    = i,
-                total_chunks    = len(chunks),
-                block_start     = chunk[0].index,
-                block_end       = chunk[-1].index,
-                character_cards = gen_state["character_cards"],
-                last_prompt     = gen_state["last_prompt"],
-                total_blocks    = gen_state["total_blocks"],
-                mode            = mode_code,
+                srt_text          = format_chunk_for_api(chunk),
+                chunk_number      = i,
+                total_chunks      = len(chunks),
+                block_start       = chunk[0].index,
+                block_end         = chunk[-1].index,
+                character_cards   = gen_state["character_cards"],
+                last_prompt       = gen_state["last_prompt"],
+                total_blocks      = gen_state["total_blocks"],
+                mode              = mode_code,
+                master_story_plan = master_plan,
             )
         else:
             msg = build_continuation_chunk_message(
-                srt_text        = format_chunk_for_api(chunk),
-                chunk_number    = i,
-                total_chunks    = len(chunks),
-                block_start     = chunk[0].index,
-                block_end       = chunk[-1].index,
-                character_cards = gen_state["character_cards"],
-                last_prompt     = gen_state["last_prompt"],
-                scene_context   = infer_scene_context(format_chunk_for_api(chunk)),
-                mode            = mode_code,
+                srt_text          = format_chunk_for_api(chunk),
+                chunk_number      = i,
+                total_chunks      = len(chunks),
+                block_start       = chunk[0].index,
+                block_end         = chunk[-1].index,
+                character_cards   = gen_state["character_cards"],
+                last_prompt       = gen_state["last_prompt"],
+                scene_context     = infer_scene_context(format_chunk_for_api(chunk)),
+                mode              = mode_code,
+                master_story_plan = master_plan,
             )
             if visual_style == "custom" and custom_style:
                 msg += (
@@ -469,6 +563,13 @@ def render_generation_ui() -> None:
     # ── Overall progress bar placeholder ──────────────────────────────────────
     overall_ph = st.empty()
 
+    # ── Step 0: Story Analysis status placeholder ──────────────────────────────
+    st.markdown(
+        '<div class="section-title">Step 0 — Master Story Plan Analysis</div>',
+        unsafe_allow_html=True,
+    )
+    analysis_ph = st.empty()
+
     # ── Chunk 1 live display placeholder ──────────────────────────────────────
     st.markdown(
         '<div class="section-title">Chunk 1 — Pre-Analysis + Prompts</div>',
@@ -504,7 +605,9 @@ def render_generation_ui() -> None:
         elapsed      = time.time() - gen_state["start_time"]
 
         with _ctx:
-            done_prompts = len(gen_state.get("all_prompts", []))
+            done_prompts    = len(gen_state.get("all_prompts", []))
+            analysis_status = gen_state.get("analysis_status", "pending")
+            analysis_msg    = gen_state.get("analysis_message", "")
             # Shallow-copy each status dict so we release the lock quickly
             statuses = {k: dict(v) for k, v in gen_state["chunk_statuses"].items()}
 
@@ -514,6 +617,17 @@ def render_generation_ui() -> None:
             pct,
             text=f"📊 {done_prompts}/{total_blocks} prompts · ⏱️ {fmt(elapsed)}",
         )
+
+        # Analysis step status
+        if analysis_status == "running":
+            analysis_ph.info(f"🧠 {analysis_msg or 'Analyzing full story arc...'}")
+        elif analysis_status in ("done", "cached"):
+            icon = "📋" if analysis_status == "cached" else "✅"
+            analysis_ph.success(f"{icon} {analysis_msg}")
+        elif analysis_status == "failed":
+            analysis_ph.warning(f"⚠️ {analysis_msg}")
+        else:
+            analysis_ph.info("⏳ Story analysis queued...")
 
         # Chunk 1
         s1  = statuses.get(1, {})
@@ -907,6 +1021,37 @@ def render_results_ui() -> None:
         if len(all_prompts) > 5:
             st.caption(f"…and {len(all_prompts) - 5} more prompts in the downloaded files.")
 
+    # ── Master Story Plan caching (main thread → session_state) ──────────────
+    if gen_state.get("save_master_plan"):
+        _plan_to_save = gen_state.get("master_story_plan", "")
+        _hash_key     = gen_state.get("srt_hash", "")
+        if _hash_key and _plan_to_save:
+            st.session_state[f"master_plan_{_hash_key}"] = _plan_to_save
+        gen_state["save_master_plan"] = False
+
+    # ── Master Story Plan expander ────────────────────────────────────────────
+    _master_plan = gen_state.get("master_story_plan", "")
+    if _master_plan:
+        with st.expander("📋 Master Story Plan (Full Story Analysis)", expanded=False):
+            _analysis_status = gen_state.get("analysis_status", "")
+            if _analysis_status == "cached":
+                st.caption("📋 Cached from previous run with this SRT file.")
+            st.text(_master_plan)
+
+    # ── Visual consistency check ──────────────────────────────────────────────
+    if _master_plan and all_prompts:
+        _prompts_dict = {p["block"]: p["image_prompt"] for p in all_prompts}
+        _consistency_warnings = check_visual_consistency(_prompts_dict, _master_plan)
+        if _consistency_warnings:
+            with st.expander(
+                f"⚠️ {len(_consistency_warnings)} Visual Consistency Warning(s)",
+                expanded=False,
+            ):
+                for _w in _consistency_warnings[:20]:
+                    st.warning(_w)
+                if len(_consistency_warnings) > 20:
+                    st.caption(f"…and {len(_consistency_warnings) - 20} more warnings.")
+
     # Pre-analysis
     chunk1_resp = gen_state.get("chunk1_response", "")
     with st.expander("🧠 Character Cards & Story Analysis", expanded=False):
@@ -1215,6 +1360,10 @@ for _ci, _ck in enumerate(chunks[1:], 2):
         "key_label": _klbl,
     }
 
+# ── Master Story Plan caching — check session_state before starting thread ────
+_srt_hash     = get_srt_blocks_hash(blocks)
+_cached_plan  = st.session_state.get(f"master_plan_{_srt_hash}", "")
+
 gen_state: dict = {
     # config
     "api_keys":         api_keys,
@@ -1235,13 +1384,19 @@ gen_state: dict = {
     # threading — protects chunk_statuses from read/write races
     "_lock":          threading.Lock(),
     # live data
-    "chunk_statuses": _init_statuses,
-    "chunk1_live":    "",
+    "chunk_statuses":  _init_statuses,
+    "chunk1_live":     "",
     "chunk1_response": "",
     "character_cards": "",
-    "last_prompt":    "",
-    "all_prompts":    [],
-    "errors":         [],
+    "last_prompt":     "",
+    "all_prompts":     [],
+    "errors":          [],
+    # master story plan
+    "srt_hash":           _srt_hash,
+    "master_story_plan":  _cached_plan,
+    "analysis_status":    "cached" if _cached_plan else "pending",
+    "analysis_message":   "Using cached Master Story Plan." if _cached_plan else "",
+    "save_master_plan":   False,
 }
 
 thread = threading.Thread(target=_generation_thread, args=(gen_state,), daemon=True)

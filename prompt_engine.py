@@ -23,9 +23,24 @@ def load_system_prompt_short() -> str:
     return load_system_prompt()
 
 
-def build_chunk1_message(srt_text: str, block_start: int, block_end: int, total_blocks: int, mode: str) -> str:
+def build_chunk1_message(srt_text: str, block_start: int, block_end: int,
+                         total_blocks: int, mode: str,
+                         master_story_plan: str = "") -> str:
     mode_text = "Option A: Image Prompts Only" if mode == "A" else "Option B: Image + Video Prompts"
     n_prompts = block_end - block_start + 1
+
+    plan_section = ""
+    if master_story_plan:
+        plan_section = (
+            f"\n\nMASTER STORY PLAN (covers the ENTIRE {total_blocks}-block story):\n"
+            f"You are generating Chunk 1 (blocks {block_start}–{block_end}).\n"
+            f"Find these block numbers in the plan and match their described visual mood,\n"
+            f"lighting, setting, and narrative phase EXACTLY. The plan overrides your own\n"
+            f"interpretation. Follow it strictly for every prompt in this chunk.\n\n"
+            f"{master_story_plan}\n\n"
+            f"--- END OF MASTER STORY PLAN — NOW PROCEED TO GENERATE PROMPTS ---\n"
+        )
+
     return f"""Selected mode: {mode_text}
 
 This is Chunk 1. The full SRT contains {total_blocks} subtitle blocks.
@@ -38,7 +53,7 @@ Total prompts for this chunk: EXACTLY {n_prompts}
 Do NOT merge blocks. Do NOT skip blocks. Do NOT add extra prompts.
 Every subtitle block gets exactly ONE prompt — even single-word blocks.
 If a block is very short, use surrounding context to infer a transitional visual.
-
+{plan_section}
 IMPORTANT: You MUST output the full pre-analysis (Story Summary, Story Outline, Character Registry with Character Cards, Sacred Figure Protocol Tags, Scene Location Map, Color Grading Map) BEFORE generating any prompts. Do NOT skip the pre-analysis. If you skip the pre-analysis and jump directly to Image Prompt 1, your entire output is invalid.
 
 IMPORTANT: Write every Image Prompt as ONE continuous flowing narrative paragraph. Do NOT use bracket tags like [Subject:], [Action:], [Location:], [Composition:], [Camera/Lens:], [Color Grading:], [Style:] or + signs between sections. All prompts must be plain text with no markdown (no **, no *, no #).
@@ -56,10 +71,23 @@ def build_continuation_chunk_message(
     character_cards: str,
     last_prompt: str,
     scene_context: str,
-    mode: str
+    mode: str,
+    master_story_plan: str = "",
 ) -> str:
     mode_text = "Option A: Image Prompts Only" if mode == "A" else "Option B: Image + Video Prompts"
     n_prompts = block_end - block_start + 1
+
+    plan_section = ""
+    if master_story_plan:
+        plan_section = (
+            f"\n\nMASTER STORY PLAN (covers the ENTIRE story):\n"
+            f"You are generating blocks {block_start}–{block_end}.\n"
+            f"Find these block numbers in the plan and match their described visual mood,\n"
+            f"lighting, setting, and narrative phase EXACTLY. Follow it strictly.\n\n"
+            f"{master_story_plan}\n\n"
+            f"--- END OF MASTER STORY PLAN ---\n"
+        )
+
     return f"""Selected mode: {mode_text}
 
 This is Chunk {chunk_number} of {total_chunks}.
@@ -72,7 +100,7 @@ Total prompts for this chunk: EXACTLY {n_prompts}
 Do NOT merge blocks. Do NOT skip blocks. Do NOT add extra prompts.
 Every subtitle block gets exactly ONE prompt — even single-word blocks.
 If a block is very short, use surrounding context to infer a transitional visual.
-
+{plan_section}
 Active Character Cards for this section:
 {character_cards}
 
@@ -218,6 +246,7 @@ def build_chunk1_message_woodcut(
     block_end: int,
     total_blocks: int,
     mode: str,
+    master_story_plan: str = "",
 ) -> str:
     """Build Chunk 1 user message for Woodcut / Victorian styles.
 
@@ -234,6 +263,16 @@ def build_chunk1_message_woodcut(
         f"  Blocks {ending_start}-{total_blocks} → ENDING section: symbolic legacy closing, wide shot.\n"
     )
 
+    plan_section = ""
+    if master_story_plan:
+        plan_section = (
+            f"\nMASTER STORY PLAN — blocks {block_start}–{block_end} in context:\n"
+            f"Use this plan silently to choose correct mood/location/lighting per block.\n"
+            f"Do NOT output the plan. Just use it to inform your scene descriptions.\n\n"
+            f"{master_story_plan}\n\n"
+            f"--- END OF PLAN ---\n"
+        )
+
     return (
         f"Generate Image Prompt {block_start} through Image Prompt {block_end}.\n"
         f"You MUST generate EXACTLY {n_prompts} prompts for this chunk.\n"
@@ -245,6 +284,7 @@ def build_chunk1_message_woodcut(
         f"No style keywords. No pre-analysis. No headers.\n"
         f"Start your response directly with: Image Prompt {block_start}:\n"
         f"{section_note}"
+        f"{plan_section}"
         f"\nSRT blocks:\n{srt_text}"
     )
 
@@ -259,6 +299,7 @@ def build_continuation_chunk_message_woodcut(
     last_prompt: str,
     total_blocks: int,
     mode: str,
+    master_story_plan: str = "",
 ) -> str:
     """Build a continuation chunk message for Woodcut / Victorian styles."""
     n_prompts    = block_end - block_start + 1
@@ -285,6 +326,16 @@ def build_continuation_chunk_message_woodcut(
             f"{last_prompt}\n"
         )
 
+    plan_section = ""
+    if master_story_plan:
+        plan_section = (
+            f"\nMASTER STORY PLAN — blocks {block_start}–{block_end} in context:\n"
+            f"Use this plan silently to choose correct mood/location/lighting per block.\n"
+            f"Do NOT output the plan. Just use it to inform your scene descriptions.\n\n"
+            f"{master_story_plan}\n\n"
+            f"--- END OF PLAN ---\n"
+        )
+
     return (
         f"This is Chunk {chunk_number} of {total_chunks}.\n"
         f"Generate Image Prompt {block_start} through Image Prompt {block_end}.\n"
@@ -298,11 +349,13 @@ def build_continuation_chunk_message_woodcut(
         f"{section_note}"
         f"{cards_section}"
         f"{continuity}"
+        f"{plan_section}"
         f"\nSRT blocks:\n{srt_text}"
     )
 
 
-def build_chunk1_message_history4(chunk: list, total_blocks: int, mode: str) -> str:
+def build_chunk1_message_history4(chunk: list, total_blocks: int, mode: str,
+                                   master_story_plan: str = "") -> str:
     """Build Chunk 1 user message for History 4 — Ancient Fresco style.
 
     Includes per-block duration and EXACT word count target.
@@ -323,9 +376,19 @@ def build_chunk1_message_history4(chunk: list, total_blocks: int, mode: str) -> 
         "STRICT WORD COUNT RULE: Each prompt must be EXACTLY the word count shown "
         "for that block (based on its duration). Count your words before finalizing each prompt.",
         "",
-        "SRT blocks with target word counts:",
-        "",
     ]
+    if master_story_plan:
+        lines += [
+            "MASTER STORY PLAN (covers the ENTIRE story):",
+            f"You are generating blocks {chunk[0].index}–{chunk[-1].index}.",
+            "Find these blocks in the plan and match their visual mood/location/lighting EXACTLY.",
+            "",
+            master_story_plan,
+            "",
+            "--- END OF MASTER STORY PLAN ---",
+            "",
+        ]
+    lines += ["SRT blocks with target word counts:", ""]
     for block in chunk:
         dur = max(0.0, time_to_seconds(block.end_time) - time_to_seconds(block.start_time))
         wc  = get_word_count_for_duration(dur)
@@ -344,6 +407,7 @@ def build_continuation_chunk_message_history4(
     last_prompt: str,
     total_blocks: int,
     mode: str,
+    master_story_plan: str = "",
 ) -> str:
     """Build a continuation chunk message for History 4 — Ancient Fresco style.
 
@@ -371,6 +435,17 @@ def build_continuation_chunk_message_history4(
         lines += [
             "Continuity reference — last prompt from previous chunk:",
             last_prompt,
+            "",
+        ]
+    if master_story_plan:
+        lines += [
+            "MASTER STORY PLAN (covers the ENTIRE story):",
+            f"You are generating blocks {chunk[0].index}–{chunk[-1].index}.",
+            "Find these blocks in the plan and match their visual mood/location/lighting EXACTLY.",
+            "",
+            master_story_plan,
+            "",
+            "--- END OF MASTER STORY PLAN ---",
             "",
         ]
     lines.append("SRT blocks with target word counts:")

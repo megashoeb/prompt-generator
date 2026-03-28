@@ -1,12 +1,18 @@
-"""LLM-based story structure analyzer — identifies natural scene breaks for smart chunking.
+"""LLM-based story structure analyzer.
 
-Returns a 3-tuple: (break_points | None, error_msg, method)
+Two public entry points:
+  run_story_analysis()          — smart chunking: identifies natural scene breaks (sync)
+  run_master_plan_analysis_async() — full-story Master Plan analysis (async, called
+                                     from inside _async_generation background thread)
+
+run_story_analysis() returns a 3-tuple: (break_points | None, error_msg, method)
   method = "api"   — result came from the LLM
   method = "local" — LLM failed, result came from local heuristic
   method = None    — complete failure
 """
 
 import asyncio
+import hashlib
 import json
 import re
 import sys
@@ -320,3 +326,139 @@ def run_story_analysis(
         return None, f"Event loop error: {e}", None
     finally:
         loop.close()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MASTER STORY PLAN ANALYSIS
+# Produces a full narrative plan that every chunk receives for visual consistency
+# ─────────────────────────────────────────────────────────────────────────────
+
+_MASTER_PLAN_SYSTEM = """\
+You are a cinematic story analyst for a visual documentary production team.
+Analyze the provided compressed SRT subtitle blocks and produce a MASTER STORY PLAN.
+This plan will be given to every image-prompt writer so all chunks have the same
+visual identity, mood, and location logic.
+
+Output ONLY this structured format — no markdown, no extra text:
+
+STORY SUMMARY:
+[5-8 sentence summary of the complete narrative arc and emotional journey]
+
+NARRATIVE PHASES:
+Phase 1: Blocks X-Y — [phase name] — [visual mood: dark/warm/somber/triumphant/mystical/etc]
+Phase 2: Blocks X-Y — [phase name] — [visual mood]
+[continue for every phase]
+
+CHARACTER REGISTRY:
+[NAME]: [age, build, ethnicity/features, clothing, weapons/props, expression tendencies]
+[continue for every named character]
+
+SCENE LOCATION MAP:
+Blocks X-Y: [location name] — [geographic region, e.g. Central European castle, Arabian desert, Byzantine Constantinople] — [era-accurate visual details]
+[continue for every location change]
+
+VISUAL MOOD PROGRESSION:
+Blocks X-Y: [dominant color palette] — [lighting type] — [emotional tone]
+[continue showing how visual feel evolves]
+
+CRITICAL TRANSITIONS:
+Block X to Block Y: [what changes visually — location/mood/character/lighting]
+[only for major visual shifts]
+"""
+
+
+def compress_srt_blocks_for_analysis(blocks: list) -> str:
+    """Compress SubtitleBlock list to 'N: first 15 words...' lines for master plan API call.
+
+    Reduces a 25 KB SRT to ~3-4 KB while preserving the full narrative arc.
+    """
+    lines = []
+    for b in blocks:
+        words = b.text.split()
+        short_text = " ".join(words[:15])
+        if len(words) > 15:
+            short_text += "..."
+        lines.append(f"{b.index}: {short_text}")
+    return "\n".join(lines)
+
+
+def get_srt_blocks_hash(blocks: list) -> str:
+    """Return an MD5 hash of the SRT content for caching master plans."""
+    content = "".join(b.text for b in blocks)
+    return hashlib.md5(content.encode()).hexdigest()
+
+
+async def _master_plan_api_call(
+    api_key: str, model: str, compressed_srt: str, total_blocks: int
+) -> tuple[str | None, str, bool]:
+    """Single API call for master plan. Returns (content | None, error_msg, is_rate_limit)."""
+    user_msg = (
+        f"Analyze this complete story with {total_blocks} subtitle blocks.\n"
+        f"Create the Master Story Plan exactly as specified in your instructions.\n\n"
+        f"COMPRESSED SRT (block number: first 15 words):\n\n{compressed_srt}"
+    )
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _MASTER_PLAN_SYSTEM},
+            {"role": "user",   "content": user_msg},
+        ],
+        "max_tokens": 3000,
+        "temperature": 0.25,
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                API_URL, headers=headers, json=payload,
+                timeout=aiohttp.ClientTimeout(total=180),
+            ) as resp:
+                if resp.status == 429:
+                    return None, "Rate limited (429).", True
+                if resp.status == 401:
+                    return None, "Invalid API key (401).", False
+                if resp.status != 200:
+                    body = await resp.text()
+                    return None, f"API error {resp.status}: {body[:200]}", False
+                try:
+                    data    = await resp.json()
+                    content = data["choices"][0]["message"]["content"]
+                except Exception as e:
+                    return None, f"Response parse error: {e}", False
+                if content and len(content.strip()) > 80:
+                    return content.strip(), "", False
+                return None, "Response too short to be a valid Master Plan.", False
+    except asyncio.TimeoutError:
+        return None, "Request timed out (180 s).", False
+    except Exception as exc:
+        return None, f"Connection error: {exc}", False
+
+
+async def run_master_plan_analysis_async(
+    api_key: str,
+    model: str,
+    compressed_srt: str,
+    total_blocks: int,
+    max_retries: int = 2,
+) -> str | None:
+    """Async full-story master plan analysis with retry on 429.
+
+    Called directly with 'await' from inside _async_generation.
+    Returns the master plan string, or None if all attempts fail.
+    """
+    for attempt in range(max_retries + 1):
+        content, err, is_rate_limit = await _master_plan_api_call(
+            api_key, model, compressed_srt, total_blocks
+        )
+        if content:
+            return content
+        if is_rate_limit and attempt < max_retries:
+            wait = 20 * (attempt + 1)
+            await asyncio.sleep(wait)
+            continue
+        if not is_rate_limit:
+            break   # non-recoverable error — stop retrying
+    return None
