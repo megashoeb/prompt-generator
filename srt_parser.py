@@ -4,6 +4,71 @@ import re
 from dataclasses import dataclass
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ENCODING HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+def fix_mojibake(text: str) -> str:
+    """Fix common UTF-8 double-encoding mojibake patterns (Hungarian/Turkish chars)."""
+    replacements = {
+        # Turkish
+        'Ã¡': 'á', 'Ã©': 'é', 'Ã­': 'í', 'Ã³': 'ó', 'Ã¶': 'ö', 'Ã¼': 'ü',
+        'Ã‡': 'Ç', 'Ã§': 'ç', '\u00c5\u009f': 'ş', '\u00c5\u009e': 'Ş',
+        '\u00c4\u009f': 'ğ', '\u00c4\u009e': 'Ğ', '\u00c4\u00b1': 'ı', '\u00c4\u00b0': 'İ',
+        # Hungarian / Central European
+        '\u00c3\u0081': 'Á', '\u00c3\u0089': 'É', '\u00c3\u008d': 'Í',
+        '\u00c3\u0093': 'Ó', '\u00c3\u0096': 'Ö', '\u00c3\u009c': 'Ü',
+        '\u00c5\u0091': 'ő', '\u00c5\u0090': 'Ő', '\u00c5\u00b1': 'ű', '\u00c5\u00b0': 'Ű',
+        'Ã¤': 'ä', 'Ã¸': 'ø', 'Ã¥': 'å', 'Ã±': 'ñ',
+        # Literal mojibake strings
+        'JÃ¡nos': 'János', 'ZÃ¡polya': 'Zápolya', 'BÃ¡thory': 'Báthory',
+        'MohÃ¡cs': 'Mohács', 'SzÃ©kesfehÃ©rvÃ¡r': 'Székesfehérvár',
+        # Common punctuation mojibake
+        'â€"': '—', 'â€"': '–', 'â€™': '\u2019', 'â€œ': '\u201c',
+        'Â·': '·', 'Â ': ' ',
+    }
+    for bad, good in replacements.items():
+        text = text.replace(bad, good)
+    return text
+
+
+def decode_srt_bytes(raw_bytes: bytes) -> tuple[str, str]:
+    """Decode raw SRT file bytes with smart encoding detection.
+
+    Returns (decoded_text, encoding_used_label).
+    Tries chardet first, then common Central-European and Turkish encodings.
+    """
+    detected_enc = 'utf-8'
+    try:
+        import chardet
+        result = chardet.detect(raw_bytes)
+        detected_enc = result.get('encoding') or 'utf-8'
+    except ImportError:
+        pass   # chardet not installed — fall through to heuristic list
+
+    seen: set[str] = set()
+    candidates: list[str] = []
+    for enc in [detected_enc, 'utf-8-sig', 'utf-8',
+                'windows-1254', 'cp1254',          # Turkish
+                'windows-1250', 'iso-8859-2',       # Hungarian / Central European
+                'latin-1', 'windows-1252']:
+        if enc and enc.lower() not in seen:
+            seen.add(enc.lower())
+            candidates.append(enc)
+
+    for enc in candidates:
+        try:
+            text = raw_bytes.decode(enc)
+            # Reject if obvious mojibake or null bytes
+            if 'Ã' not in text and '\x00' not in text[:200]:
+                return text, enc
+        except (UnicodeDecodeError, LookupError):
+            continue
+
+    # Final fallback — replace undecodeable bytes
+    return raw_bytes.decode('utf-8', errors='replace'), 'utf-8 (fallback)'
+
+
 @dataclass
 class SubtitleBlock:
     index: int

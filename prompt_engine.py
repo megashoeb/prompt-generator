@@ -59,7 +59,9 @@ IMPORTANT: You MUST output the full pre-analysis (Story Summary, Story Outline, 
 IMPORTANT: Write every Image Prompt as ONE continuous flowing narrative paragraph. Do NOT use bracket tags like [Subject:], [Action:], [Location:], [Composition:], [Camera/Lens:], [Color Grading:], [Style:] or + signs between sections. All prompts must be plain text with no markdown (no **, no *, no #).
 
 SRT blocks for this chunk:
-{srt_text}"""
+{srt_text}
+
+FINAL REMINDER: You must output exactly {n_prompts} prompts numbered Image Prompt {block_start} through Image Prompt {block_end}. Count your prompts before finishing. If you have fewer than {n_prompts}, go back and generate the missing ones. Every subtitle block — even a single word — gets its own separate prompt."""
 
 
 def build_continuation_chunk_message(
@@ -111,7 +113,9 @@ Continuity reference — last prompt from previous chunk:
 {last_prompt}
 
 SRT blocks for this chunk:
-{srt_text}"""
+{srt_text}
+
+FINAL REMINDER: You must output exactly {n_prompts} prompts numbered Image Prompt {block_start} through Image Prompt {block_end}. Count your prompts before finishing. If you have fewer than {n_prompts}, go back and generate the missing ones. Every subtitle block — even a single word — gets its own separate prompt."""
 
 
 def extract_character_cards(chunk1_response: str) -> str:
@@ -161,21 +165,28 @@ def extract_all_prompts(response: str) -> list[dict]:
       'prompt 1 – ...'   (lowercase variant)
     """
     # ── Image prompts ─────────────────────────────────────────────────────────
+    # Patterns ordered from most-specific to most-general fallback.
+    # [:–—\-] covers colon, en-dash, em-dash, hyphen.
     img_patterns = [
-        r'Image\s+Prompt\s+(\d+)\s*[:–-]\s*(.*?)(?=(?:Video\s+Prompt\s*\d+|Image\s+Prompt\s*\d+|$))',
-        r'(?<!\w)Prompt\s+(\d+)\s*[:–-]\s*(.*?)(?=(?:Video\s+Prompt\s*\d+|(?<!\w)Prompt\s+\d+\s*[:–-]|$))',
+        # Pattern 1: "Image Prompt 123: ..." (standard format)
+        r'Image\s+Prompt\s+(\d+)\s*[:–—\-]\s*(.*?)(?=(?:Video\s+Prompt\s*\d+\s*[:–—\-]|Image\s+Prompt\s*\d+\s*[:–—\-]|$))',
+        # Pattern 2: "Prompt 123: ..." (without "Image" prefix)
+        r'(?<!\w)Prompt\s+(\d+)\s*[:–—\-]\s*(.*?)(?=(?:Video\s+Prompt\s*\d+\s*[:–—\-]|(?<!\w)Prompt\s+\d+\s*[:–—\-]|$))',
+        # Pattern 3: "123. " or "123: " plain number prefix (LLM sometimes drops "Prompt")
+        r'(?:^|\n)\s*(\d{1,3})[.:]\s+((?:[A-Z][^0-9\n].*?)(?=\n\s*\d{1,3}[.:]\s+[A-Z]|\Z))',
     ]
     img_dict: dict[int, str] = {}
     for pattern in img_patterns:
-        matches = re.findall(pattern, response, re.DOTALL | re.IGNORECASE)
+        matches = re.findall(pattern, response, re.DOTALL | re.IGNORECASE | re.MULTILINE)
         if matches:
             for num_str, text in matches:
                 num = int(num_str)
                 cleaned = clean_prompt_text(text.strip())
-                if cleaned and len(cleaned) > 15:   # skip empty/noise extractions
+                if cleaned and len(cleaned) > 20:   # skip empty/noise extractions
                     if num not in img_dict:           # first occurrence wins
                         img_dict[num] = cleaned
-            break  # stop at first pattern that yields results
+            if img_dict:
+                break  # stop at first pattern that yields usable results
 
     # ── Video prompts ─────────────────────────────────────────────────────────
     vid_pattern = r'Video\s+Prompt\s*(\d+)\s*[:–-]\s*(.*?)(?=(?:Image\s+Prompt\s*\d+|Video\s+Prompt\s*\d+|$))'
@@ -286,6 +297,10 @@ def build_chunk1_message_woodcut(
         f"{section_note}"
         f"{plan_section}"
         f"\nSRT blocks:\n{srt_text}"
+        f"\n\nFINAL REMINDER: You must output exactly {n_prompts} prompts numbered "
+        f"Image Prompt {block_start} through Image Prompt {block_end}. "
+        f"Count your prompts before finishing. If you have fewer than {n_prompts}, "
+        f"go back and generate the missing ones. Every subtitle block — even a single word — gets its own separate prompt."
     )
 
 
@@ -351,6 +366,10 @@ def build_continuation_chunk_message_woodcut(
         f"{continuity}"
         f"{plan_section}"
         f"\nSRT blocks:\n{srt_text}"
+        f"\n\nFINAL REMINDER: You must output exactly {n_prompts} prompts numbered "
+        f"Image Prompt {block_start} through Image Prompt {block_end}. "
+        f"Count your prompts before finishing. If you have fewer than {n_prompts}, "
+        f"go back and generate the missing ones. Every subtitle block — even a single word — gets its own separate prompt."
     )
 
 

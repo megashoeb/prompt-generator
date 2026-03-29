@@ -15,7 +15,7 @@ from contextlib import nullcontext
 import streamlit as st
 import streamlit.components.v1 as components
 
-from srt_parser import parse_srt, auto_chunk, smart_chunk_by_breaks, format_chunk_for_api, block_duration
+from srt_parser import parse_srt, auto_chunk, smart_chunk_by_breaks, format_chunk_for_api, block_duration, decode_srt_bytes, fix_mojibake
 from api_client import send_chunk_sync_streaming, process_chunks_queue, validate_api_keys_sync
 from prompt_engine import (
     load_system_prompt,
@@ -694,6 +694,7 @@ def _build_retry_message(
     character_cards: str,
     all_prompts: list,
     mode_code: str,
+    master_plan: str = "",
 ) -> str:
     """Build a targeted user message to regenerate only the specified blocks."""
     missing_set = set(missing_blocks)
@@ -718,6 +719,13 @@ def _build_retry_message(
         else "Option B: Image + Video Prompts"
     )
 
+    plan_section = ""
+    if master_plan:
+        plan_section = (
+            f"MASTER STORY PLAN — use to match visual mood for blocks {missing_blocks}:\n"
+            f"{master_plan[:3000]}{'...' if len(master_plan) > 3000 else ''}\n\n"
+        )
+
     return (
         f"The user selected: {mode_label}\n\n"
         f"RETRY TASK — These subtitle blocks were missed in the original generation.\n"
@@ -728,12 +736,15 @@ def _build_retry_message(
         f"- ONLY output prompts for blocks in {missing_blocks}. Skip all others.\n\n"
         f"CHARACTER CARDS (use FULL descriptions as written):\n{character_cards}\n\n"
         f"SCENE CONTEXT:\n{scene_ctx}\n\n"
+        f"{plan_section}"
         f"CONTINUITY REFERENCE (last generated prompt before first missing block):\n"
         f"{cont_ref or 'Beginning of content — no prior prompt available.'}\n\n"
         f"SRT BLOCKS TO REGENERATE:\n\n{srt_text}\n\n"
         f"Generate Image Prompt {first_m} through Image Prompt {last_m}. "
         f"Use full Character Card descriptions every time a character appears. "
-        f"Follow all style, formatting, and subtitle-fidelity rules."
+        f"Follow all style, formatting, and subtitle-fidelity rules.\n\n"
+        f"FINAL REMINDER: Output EXACTLY {len(missing_blocks)} prompts for blocks {missing_blocks}. "
+        f"No extra prompts. No skipped blocks."
     )
 
 
@@ -741,7 +752,9 @@ def _retry_generation_thread(gen_state: dict) -> None:
     """Background thread: stream a retry call for missing blocks.
     Writes live text and final result into gen_state['retry'].
     """
-    retry = gen_state["retry"]
+    retry        = gen_state["retry"]
+    visual_style = gen_state.get("visual_style", "dark_fantasy")
+    master_plan  = gen_state.get("master_story_plan", "")
     try:
         all_blocks = [b for chunk in gen_state["chunks"] for b in chunk]
         msg        = _build_retry_message(
@@ -750,9 +763,14 @@ def _retry_generation_thread(gen_state: dict) -> None:
             character_cards = gen_state.get("character_cards", ""),
             all_prompts     = gen_state.get("all_prompts", []),
             mode_code       = gen_state.get("mode_code", "A"),
+            master_plan     = master_plan,
         )
 
-        sys_short = load_system_prompt_short()
+        # Use the style-correct system prompt (not always dark_fantasy short prompt)
+        if visual_style in ("dark_fantasy", "custom"):
+            sys_short = load_system_prompt_short()
+        else:
+            sys_short = load_system_prompt_for_style(visual_style)
         api_keys  = gen_state.get("api_keys", [])
         model     = gen_state.get("model", "")
 
@@ -1558,8 +1576,12 @@ with tab_paste:
 
 # Determine srt_content from whichever input was used
 srt_content = None
+_detected_encoding = None
 if uploaded_file:
-    srt_content = uploaded_file.read().decode("utf-8", errors="ignore")
+    _raw_bytes = uploaded_file.read()
+    srt_content, _detected_encoding = decode_srt_bytes(_raw_bytes)
+    # Apply mojibake fix in case encoding detection wasn't perfect
+    srt_content = fix_mojibake(srt_content)
 elif pasted_text and pasted_text.strip():
     srt_content = pasted_text.strip()
 
@@ -1570,6 +1592,8 @@ if not srt_content:
 if not api_keys:
     st.warning("🔑 Enter your OpenRouter API key in the sidebar.")
     st.stop()
+if _detected_encoding:
+    st.caption(f"📄 Encoding detected: `{_detected_encoding}`")
 blocks = parse_srt(srt_content)
 if not blocks:
     st.error("❌ No valid subtitle blocks found. Check your SRT format.")
