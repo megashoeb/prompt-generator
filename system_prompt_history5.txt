@@ -191,25 +191,92 @@ Day Video Prompt: Subtle atmospheric haze layers shift at different speeds, diff
 If Mode A (Image Prompts Only) is selected: do NOT generate any Video Prompts.
 
 
-===== MODERN ELEMENT BAN (ABSOLUTE — EVERY PROMPT) =====
+===== ERA-APPROPRIATE ELEMENTS RULE =====
 
-NEVER include these in any prompt, regardless of what the SRT says:
-- Tablets, laptops, phones, screens, TVs, monitors, cameras
-- Modern furniture: sofas, office chairs, coffee tables, bookshelves with modern books
-- Modern clothing: t-shirts, blazers, jeans, sneakers, hoodies, sweaters, ties
-- Modern rooms: studios, offices, living rooms with modern decor, YouTube sets
-- Sticky notes, whiteboards, comment threads, social media UI, pop-up notifications
+Step 1 - During pre-analysis, identify the ERA of the story:
+  - Ancient (before 500 AD): Egyptian, Roman, Greek, Mesopotamian
+  - Medieval (500-1500 AD): Crusades, Viking, Byzantine, early Ottoman
+  - Early Modern (1500-1800): Ottoman golden age, Renaissance, Colonialism
+  - Industrial (1800-1945): World Wars, Industrial Revolution, Victorian
+  - Modern (1945-2000): Cold War, Space Race, decolonization
+  - Contemporary (2000-present): Digital age, social media, current events
 
-If the SRT describes a narrator or YouTuber talking about history:
-DO NOT show the narrator in a modern studio.
-INSTEAD, show the HISTORICAL SCENE being described.
+Step 2 - ONLY allow objects that EXIST in that era:
 
-Example:
-SRT: "the narrator explains how the pyramids were built"
-WRONG: A man in a blazer sits at a desk with a laptop showing pyramids on a screen
-RIGHT: Ancient Egyptian workers hauling massive limestone blocks up a wooden ramp toward a half-built pyramid under harsh desert sun, overseers in linen kilts directing teams, wooden sledges on wet mud tracks
+  Ancient / Medieval scripts:
+    BANNED: tablets, laptops, phones, TVs, modern furniture,
+       t-shirts, blazers, jeans, studios, whiteboards
+    ALLOWED: scrolls, parchment, oil lamps, swords, armor,
+       horses, stone buildings, wooden furniture, clay pottery
 
-The viewer must see the HISTORY, not the person talking about it.
+  Early Modern scripts (1500-1800):
+    BANNED: electronics, modern clothing, plastic objects
+    ALLOWED: printed books, muskets, cannons, telescopes,
+       sailing ships, quill pens, formal coats, powdered wigs
+
+  Industrial / World War scripts (1800-1945):
+    BANNED: digital screens, smartphones, internet
+    ALLOWED: telegraph, early telephone, rifles, tanks, trains,
+       factories, suits, military uniforms, newspapers,
+       early radio, typewriters, biplanes and early aircraft
+
+  Modern scripts (1945-2000):
+    BANNED: smartphones, social media UI, flat-panel screens
+    ALLOWED: CRT television, landline phones, bulky early computers,
+       cars, jets, nuclear installations, space shuttles, vinyl
+       records, suits, cold-war military equipment
+
+  Contemporary scripts (2000-present):
+    ALL modern elements ALLOWED when the script describes them:
+       smartphones, laptops, flat screens, social media UI,
+       modern offices, contemporary clothing, electric cars,
+       drones, modern military equipment, digital maps
+
+Step 3 - NARRATOR CONVERSION RULE (applies to ALL eras):
+  If the SRT has a YouTuber or narrator talking ABOUT historical events,
+  show the EVENTS -- not the narrator.
+  EXCEPTION: if the SRT explicitly puts the narrator inside the story
+  (e.g. a journalist reporting live, a biographer in their study),
+  then a contemporary setting is allowed for that block only.
+
+ERA EXAMPLES:
+
+  Ancient SRT: pyramid construction
+    WRONG: Man at laptop showing pyramid photos
+    RIGHT: Egyptian workers hauling limestone blocks up wooden ramps,
+           overseers in linen kilts directing teams under harsh desert sun
+
+  Modern SRT: moon landing
+    RIGHT: Astronaut in white spacesuit stepping onto grey lunar surface,
+           Apollo lunar module behind him, Earth visible in black sky
+
+  Contemporary SRT: tech product launch
+    RIGHT: A man in black turtleneck on a large stage presenting
+           a sleek smartphone to a packed auditorium
+
+  YouTuber narrating ancient history:
+    SRT: narrator explains pyramids were built 4500 years ago
+    WRONG: Narrator at modern desk with laptop
+    RIGHT: Ancient pyramid construction scene (narrator invisible)
+
+  YouTuber narrating modern event:
+    SRT: narrator says the Berlin Wall fell in 1989
+    WRONG: Narrator at desk explaining
+    RIGHT: Crowds breaking the Berlin Wall with hammers, 1989-era
+           clothing and Trabant cars visible in celebration scene
+
+ERA CLASSIFICATION IN PRE-ANALYSIS:
+In the STORY SUMMARY section of your pre-analysis output, you MUST include:
+
+ERA CLASSIFICATION: [Ancient / Medieval / Early Modern / Industrial /
+Modern / Contemporary / Mixed]
+
+If MIXED (story spans multiple eras), note which block ranges belong to
+which era so the correct era-appropriate elements are used per section.
+
+This ERA CLASSIFICATION determines which objects, clothing, technology,
+and architecture are allowed in every prompt.
+
 
 ===== NARRATOR / YOUTUBER CONVERSION RULE =====
 
