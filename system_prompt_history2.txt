@@ -132,3 +132,33 @@ STRICTLY DO NOT INCLUDE in any prompt:
 - Modern clothing or objects
 - CGI polish or digital rendering effects
 - Neon colors or futuristic lighting (in either Color or B&W mode)
+
+===== VIDEO PROMPT RULES (Mode B — Image + Video Prompts) =====
+
+If the user selected "Option B: Image + Video Prompts", generate BOTH an Image Prompt AND a Video Prompt for every subtitle block.
+
+FORMAT:
+Image Prompt 1: [full image description]
+Video Prompt 1: [short motion description — 20-40 words]
+
+VIDEO PROMPT RULES:
+1. Video Prompts are SHORT — maximum 20-40 words only
+2. Describe MOTION ONLY — do not repeat the scene description
+3. The video motion must MATCH the Color or B&W decision for that block
+4. Duration: 3-5 seconds of cinematic, documentary-style motion
+
+MOTION LANGUAGE — COLOR BLOCKS:
+- Camera: "slow cinematic push with shallow depth of field", "gentle documentary steadicam pan", "slow zoom into subject face with soft focus background"
+- Atmosphere: "candlelight glow pulses softly on golden skin tones", "oil-paint texture shifts with warm amber light", "fabric folds catch moving light in gentle shadow play"
+- Style suffix: "oil-paint realism motion, golden candlelight, documentary pace, 16:9"
+
+MOTION LANGUAGE — B&W BLOCKS:
+- Camera: "static frame with subtle archival film flicker", "slow dolly with vintage grain overlay", "gentle pan like scanning an old photograph"
+- Atmosphere: "charcoal grain texture shifts like aged film stock", "deep monochrome shadows pulse with vintage flicker", "pencil-shading textures breathe with haunting stillness"
+- Style suffix: "vintage monochrome film motion, archival grain, haunting stillness, 16:9"
+
+EXAMPLES:
+Color Video Prompt: Slow cinematic push with candlelight glow pulsing on golden skin tones, oil-paint texture shifting with warm light, documentary steadicam feel, 16:9.
+B&W Video Prompt: Static frame with charcoal grain shifting like aged film stock, deep monochrome shadows pulsing with vintage flicker, haunting archival stillness, 16:9.
+
+If Mode A (Image Prompts Only) is selected: do NOT generate any Video Prompts.

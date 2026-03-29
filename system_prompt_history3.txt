@@ -161,3 +161,32 @@ STRICTLY DO NOT INCLUDE:
 - The word "Noor" for any non-sacred figure
 - A physical depiction of the Quran or any open holy book
 - Hyper-symmetry or artificially perfect compositions
+
+===== VIDEO PROMPT RULES (Mode B — Image + Video Prompts) =====
+
+If the user selected "Option B: Image + Video Prompts", generate BOTH an Image Prompt AND a Video Prompt for every subtitle block.
+
+FORMAT:
+Image Prompt 1: [full image description]
+Video Prompt 1: [short motion description — 20-40 words]
+
+VIDEO PROMPT RULES:
+1. Video Prompts are SHORT — maximum 20-40 words only
+2. Describe MOTION ONLY — do not repeat the scene description
+3. For NOOR blocks: the motion must show the divine light radiating and pulsing
+4. For normal blocks: thick impasto brushstrokes shimmer with mystical atmosphere
+5. Duration: 3-5 seconds of painterly, mystical motion
+
+MOTION LANGUAGE — NORMAL BLOCKS:
+- Camera: "slow zoom into thick swirling brushstrokes as if diving into the painting", "gentle drift revealing impasto texture depth", "slow push through magical haze toward the subject"
+- Atmosphere: "thick impasto brushstrokes shimmer as light crosses them", "magical haze drifts with ethereal particles", "starry lapis lazuli sky twinkles through painted clouds", "ember glow pulses deep within the canvas texture"
+- Style suffix: "impasto oil texture maintained, thick brushstroke depth visible, magical realism, 16:9"
+
+MOTION LANGUAGE — NOOR BLOCKS:
+- "Blinding golden Noor light pulses and radiates outward with divine intensity, surrounding figures sway shielding their eyes, ethereal golden particles spiral around the sacred source, 16:9."
+
+EXAMPLES:
+Normal Video Prompt: Slow zoom into thick swirling brushstrokes, magical haze drifts with ethereal particles, starry lapis lazuli sky twinkles, impasto depth visible in motion, 16:9.
+Noor Video Prompt: Blinding golden Noor light pulses outward, surrounding figures sway shielding eyes, ethereal golden particles spiral around the sacred source, divine luminance breathing, 16:9.
+
+If Mode A (Image Prompts Only) is selected: do NOT generate any Video Prompts.

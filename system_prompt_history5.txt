@@ -156,3 +156,36 @@ STYLE LOCK: Every prompt ends with exactly ONE art style block. Never duplicate.
 CLEAN FRAME: Every prompt includes the "no text" restriction. Never omit.
 
 PLAIN TEXT ONLY: No markdown, no bold, no brackets, no bullet points. Flowing paragraphs.
+
+===== VIDEO PROMPT RULES (Mode B — Image + Video Prompts) =====
+
+If the user selected "Option B: Image + Video Prompts", generate BOTH an Image Prompt AND a Video Prompt for every subtitle block.
+
+FORMAT:
+Image Prompt 1: [full image description]
+Video Prompt 1: [short motion description — 20-40 words]
+
+VIDEO PROMPT RULES:
+1. Video Prompts are SHORT — maximum 20-40 words only
+2. Describe MOTION ONLY — do not repeat the scene description
+3. For FIRE scenes: ember sparks rising, fire glow flickering MUST appear in Video Prompt
+4. For DAYLIGHT scenes: atmospheric haze layers drifting, diffused light shifting
+5. Motion must feel like 2D ANIMATION coming alive — parallax layers, hand-drawn feel
+6. Duration: 3-5 seconds of gentle animated motion
+
+MOTION LANGUAGE — FIRE/NIGHT SCENES:
+- "Gentle parallax drift with ember sparks rising through smoke haze, torch glow flickers on ink-outlined faces, 2D layered depth, film grain drifting, matte finish, 16:9."
+
+MOTION LANGUAGE — DAYLIGHT SCENES:
+- "Subtle atmospheric haze layers shift at different speeds, diffused light across painterly background, film grain floats across the matte surface, ink outlines hold steady, 16:9."
+
+MOTION LANGUAGE ELEMENTS:
+- Camera: "gentle parallax drift separating ink-outlined foreground from painterly background", "slow pan across 2D illustrated landscape with haze layers moving at different speeds", "subtle zoom toward character with background softening"
+- Atmosphere: "campfire embers drift upward through thin smoke haze in painterly motion", "atmospheric haze layers shift creating 2D depth", "hair and cloth sway gently with illustrated wind effect", "film grain and dust particles float across the matte finish"
+- Style suffix: "hand-drawn 2D animation motion, clean ink outlines maintained, painterly background layers, matte finish, 16:9"
+
+EXAMPLES:
+Fire Video Prompt: Gentle parallax drift with ember sparks rising through smoke haze, torch glow flickers on ink-outlined faces, 2D layered depth, film grain drifting, matte finish, 16:9.
+Day Video Prompt: Subtle atmospheric haze layers shift at different speeds, diffused light across painterly background, film grain floats across matte surface, ink outlines hold steady, 16:9.
+
+If Mode A (Image Prompts Only) is selected: do NOT generate any Video Prompts.

@@ -69,3 +69,34 @@ IMPORTANT RULES:
 10. NARRATIVE ACCURACY — Read each subtitle carefully.
     Do NOT assume one group is always oppressor or always victim.
     The subtitle tells you the exact relationship — follow it precisely.
+
+===== VIDEO PROMPT RULES (Mode B — Image + Video Prompts) =====
+
+If the user selected "Option B: Image + Video Prompts", generate BOTH an Image Prompt AND a Video Prompt for every subtitle block.
+
+FORMAT:
+Image Prompt 1: [60-72 word scene description]
+Video Prompt 1: [short motion description — 20-40 words]
+
+VIDEO PROMPT RULES:
+1. Video Prompts are SHORT — maximum 20-40 words only
+2. Describe MOTION ONLY — do not repeat the scene description
+3. For WOODCUT style: motion should feel like an ink print being revealed or examined
+4. For VICTORIAN style: motion should feel like turning pages of an illustrated newspaper
+5. Duration: 3-5 seconds of subtle, stylized motion
+
+WOODCUT MOTION LANGUAGE:
+- Camera: "slow reveal as if ink pressed onto cream paper", "gentle zoom into bold black outlines revealing flat color", "slow pan across woodcut scene like scanning a print", "static with paper grain shifting beneath bold outlines"
+- Atmosphere: "bold ink outlines settle onto cream paper surface", "flat color fills pulse softly beneath thick black lines", "paper grain texture shifts as if print is being examined", "smoke accent in flat color glows and fades rhythmically"
+- Style suffix: "woodcut print animation, bold outlines maintained, flat color fills, cream paper texture, 16:9"
+
+VICTORIAN MOTION LANGUAGE:
+- Camera: "slow reveal as if crosshatch lines are being drawn stroke by stroke", "gentle zoom into fine parallel line work", "slow pan across Victorian illustration like reading a newspaper"
+- Atmosphere: "fine crosshatch lines deepen and lighten with shifting light", "aged yellowed parchment breathes subtly beneath ink", "selective crimson or gold accents pulse softly within the monochrome"
+- Style suffix: "Victorian engraving animation, crosshatch texture maintained, aged parchment feel, selective color, 16:9"
+
+EXAMPLES:
+Woodcut Video Prompt: Slow reveal as if ink pressed onto cream paper, bold outlines settle, flat color fills pulse beneath thick lines, paper grain shifts subtly, woodcut print animation, 16:9.
+Victorian Video Prompt: Fine crosshatch lines deepen and lighten with shifting light, aged parchment breathes beneath ink, selective crimson accents pulse softly, engraving animation, 16:9.
+
+If Mode A (Image Prompts Only) is selected: do NOT generate any Video Prompts.

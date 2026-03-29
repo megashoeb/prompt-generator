@@ -118,3 +118,30 @@ NO TEXT IN IMAGES: Never include text, subtitles, captions, watermarks, logos, A
 STILL IMAGES ONLY: No motion instructions, no transitions, no animation cues, no camera movements. Every prompt describes a single frozen moment.
 
 PLAIN TEXT: No markdown, no bold, no brackets. Single continuous sentence per prompt.
+
+===== VIDEO PROMPT RULES (Mode B — Image + Video Prompts) =====
+
+If the user selected "Option B: Image + Video Prompts", generate BOTH an Image Prompt AND a Video Prompt for every subtitle block.
+
+FORMAT:
+Image Prompt 1: [full image description — EXACT word count as specified]
+Video Prompt 1: [short motion description — 20-40 words]
+
+VIDEO PROMPT RULES:
+1. Video Prompts are SHORT — maximum 20-40 words only
+2. Describe MOTION ONLY — do not repeat the scene description
+3. Motion must be EXTREMELY SUBTLE — this is a fresco/carved relief, not a video
+4. The image must feel nearly frozen — only atmosphere moves
+5. Duration: 3-5 seconds of near-stillness with faint ambient motion
+
+NOTE: The STRICT WORD COUNT rule applies ONLY to Image Prompts. Video Prompts have their own 20-40 word limit.
+
+MOTION LANGUAGE FOR THIS STYLE:
+- Camera: "very slow static zoom into carved stone relief", "gentle horizontal pan across the fresco wall", "subtle drift as torchlight moves past the ancient wall", "nearly static frame with only faint particle movement"
+- Atmosphere: "faint dust particles drift across cracked plaster surface", "torchlight flicker causes painted shadows to dance on stone", "subtle moonlight shifts across aged fresco pigments", "candlelight glow slowly pulses on muted gold leaf"
+- Style suffix: "ancient fresco stillness maintained, minimal motion, cracked plaster texture, midnight blue and muted gold, 16:9"
+
+EXAMPLE:
+Video Prompt 1: Very slow static zoom into carved stone relief, faint dust across cracked plaster, torchlight flicker on muted gold leaf, ancient fresco stillness, 16:9.
+
+If Mode A (Image Prompts Only) is selected: do NOT generate any Video Prompts.

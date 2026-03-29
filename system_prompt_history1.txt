@@ -116,3 +116,33 @@ NO EXTRA PROMPTS RULE: Do NOT add transition shots or establishing shots beyond 
 STYLE LINE RULE: Each prompt ends with EXACTLY ONE style block. Do not duplicate the art style description.
 
 PLAIN TEXT ONLY: No markdown formatting. No bold, no italics, no headers. No bracket tags. Pure flowing narrative paragraphs.
+
+===== VIDEO PROMPT RULES (Mode B — Image + Video Prompts) =====
+
+If the user selected "Option B: Image + Video Prompts", generate BOTH an Image Prompt AND a Video Prompt for every subtitle block.
+
+FORMAT:
+Image Prompt 1: [full image description]
+Video Prompt 1: [short motion description — 20-40 words]
+
+Image Prompt 2: [full image description]
+Video Prompt 2: [short motion description — 20-40 words]
+
+VIDEO PROMPT RULES:
+1. Video Prompts are SHORT — maximum 20-40 words only
+2. Describe MOTION ONLY — do not repeat the scene description
+3. Include: camera movement + atmospheric texture motion + style preservation note
+4. Motion must feel like a MUSEUM PAINTING coming alive — not video footage
+5. Duration: 3-5 seconds of subtle, dignified motion
+
+MOTION LANGUAGE FOR THIS STYLE:
+- Camera: "gentle pan across aged parchment surface", "slow zoom into central figure revealing craquelure cracks", "subtle drift as if examining a museum artifact", "static frame with faint dust motes drifting", "slow pull back like stepping away from a painting"
+- Atmosphere: "faint dust motes float across the worn surface", "subtle candlelight flicker illuminates brush texture", "warm sepia glow slowly washes across the scene", "craquelure cracks deepen as light shifts"
+- Style suffix: "museum parchment texture preserved, warm ochre and umber tones, aged artifact feel, 16:9"
+
+VIDEO PROMPT MUST NOT include: fast motion, modern effects, lens flare, full scene re-description, text or UI.
+
+EXAMPLE:
+Video Prompt 1: Gentle pan across aged parchment surface, faint dust motes drifting, candlelight flicker illuminates craquelure details, museum artifact warmth, 16:9.
+
+If Mode A (Image Prompts Only) is selected: do NOT generate any Video Prompts.

@@ -921,6 +921,28 @@ def render_results_ui() -> None:
         with _wc3: st.metric("📈 Max Words", _max_wc)
         with _wc4: st.metric("🎯 In Range (±3)", f"{_acc}%")
 
+    # ── Mode B — Video Prompt stats (all styles) ──────────────────────────────
+    if mode_code == "B":
+        _video_prompts = [p for p in all_prompts if p.get("video_prompt", "").strip()]
+        _img_count     = len(all_prompts)
+        _vid_count     = len(_video_prompts)
+        _vid_match     = _vid_count == _img_count
+        _vc1, _vc2, _vc3 = st.columns(3)
+        with _vc1: st.metric("🖼️ Image Prompts",  _img_count)
+        with _vc2: st.metric("🎬 Video Prompts",  _vid_count)
+        with _vc3:
+            if _vid_match:
+                st.metric("🔗 Paired", "✅ Perfect")
+            else:
+                _diff = abs(_img_count - _vid_count)
+                st.metric("🔗 Paired", f"⚠️ {_diff} missing")
+        if not _vid_match:
+            _missing_vids = [p["block"] for p in all_prompts if not p.get("video_prompt", "").strip()]
+            st.warning(
+                f"⚠️ {len(_missing_vids)} blocks have no Video Prompt: "
+                f"{_missing_vids[:20]}{'...' if len(_missing_vids) > 20 else ''}"
+            )
+
     # ── Count validation stats ────────────────────────────────────────────────
     _validation = gen_state.get("prompt_validation") or validate_prompt_count(all_prompts, total_blocks)
     _missing_list = _validation["missing"]
