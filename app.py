@@ -69,14 +69,26 @@ def fmt(seconds: float) -> str:
     return f"{s // 60}m {s % 60:02d}s"
 
 
-def calc_est(chunks: list, max_par: int) -> float:
-    c1 = (len(chunks[0]) * 350) / 38
+MODEL_SPEEDS = {
+    "stepfun/step-3.5-flash:free":           45,   # avg 38-52 tok/s
+    "nvidia/nemotron-3-super-120b-a12b:free": 22,   # avg 20-25 tok/s
+}
+
+MODEL_DISPLAY = {
+    "stepfun/step-3.5-flash:free":           "Step 3.5 Flash",
+    "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super",
+}
+
+
+def calc_est(chunks: list, max_par: int, model: str = "stepfun/step-3.5-flash:free") -> float:
+    tps = MODEL_SPEEDS.get(model, 38)
+    c1 = (len(chunks[0]) * 350) / tps
     if len(chunks) <= 1:
         return c1
     cont = chunks[1:]
     rounds = math.ceil(len(cont) / max_par)
     avg = sum(len(c) for c in cont) / len(cont)
-    return c1 + rounds * (avg * 350 / 38)
+    return c1 + rounds * (avg * 350 / tps)
 
 
 def check_visual_consistency(prompts_dict: dict, master_plan: str) -> list[str]:
@@ -889,9 +901,13 @@ def render_results_ui() -> None:
         if _ct:
             _custom_note = f" — `{_ct[:60]}{'…' if len(_ct) > 60 else ''}`"
 
+    _model_label = MODEL_DISPLAY.get(
+        gen_state.get("model", ""), gen_state.get("model", "")
+    )
     st.success(
         f"✅ Generation complete! · ⏱️ {fmt(elapsed)} · "
         f"📊 {len(all_prompts)}/{total_blocks} prompts · "
+        f"🤖 {_model_label} · "
         f"Style: {_style_label}{_custom_note}"
     )
 
@@ -982,6 +998,20 @@ def render_results_ui() -> None:
         if _missing_list:
             _miss_preview = str(_missing_list[:20]) + ("..." if len(_missing_list) > 20 else "")
             st.warning(f"⚠️ {len(_missing_list)} missing prompt(s): blocks {_miss_preview}")
+
+            # Auto-suggest switching models if many blocks are missing
+            _used_model = gen_state.get("model", "")
+            _other_models = {
+                "stepfun/step-3.5-flash:free":           "nvidia/nemotron-3-super-120b-a12b:free",
+                "nvidia/nemotron-3-super-120b-a12b:free": "stepfun/step-3.5-flash:free",
+            }
+            _other = _other_models.get(_used_model)
+            if _other and len(_missing_list) > 10:
+                _other_name = MODEL_DISPLAY.get(_other, _other)
+                st.info(
+                    f"💡 **Tip:** {len(_missing_list)} blocks missing — try switching to "
+                    f"**{_other_name}** in the sidebar for better count accuracy on large SRTs."
+                )
 
         if _extra_list:
             st.info(f"🔧 {len(_extra_list)} extra prompt(s) were auto-removed (blocks {_extra_list[:10]})")
@@ -1419,7 +1449,27 @@ with st.sidebar:
     api_key  = st.text_input("OpenRouter API Key", type="password", placeholder="sk-or-…")
     api_keys = [api_key] if api_key and api_key.strip() else []  # overridden below if multi-key
 
-    model   = st.selectbox("Model", ["stepfun/step-3.5-flash:free"], index=0)
+    st.markdown("### 🤖 Model")
+    model = st.selectbox(
+        "Choose AI model",
+        options=[
+            "stepfun/step-3.5-flash:free",
+            "nvidia/nemotron-3-super-120b-a12b:free",
+        ],
+        format_func=lambda x: {
+            "stepfun/step-3.5-flash:free":           "⚡ Step 3.5 Flash — Fast (default)",
+            "nvidia/nemotron-3-super-120b-a12b:free": "🎯 Nemotron 3 Super — Accurate",
+        }[x],
+        index=0,
+        help="Step 3.5 Flash = 2× faster. Nemotron = better count accuracy & long context.",
+        label_visibility="collapsed",
+    )
+    _model_tips = {
+        "stepfun/step-3.5-flash:free":           "⚡ ~45 tok/s · Best for: quick generation, daily use",
+        "nvidia/nemotron-3-super-120b-a12b:free": "🎯 ~22 tok/s · Best for: accurate count, large SRTs (500+ blocks)",
+    }
+    st.caption(_model_tips[model])
+    st.session_state.selected_model = model
 
     # ── Visual Style selector ─────────────────────────────────────────────────
     st.markdown("### 🎨 Visual Style")
@@ -1651,13 +1701,14 @@ if smart_info:
     st.success(smart_info)
 
 # ── Stats row ─────────────────────────────────────────────────────────────────
-est_sec = calc_est(chunks, max_parallel)
-c1, c2, c3, c4, c5 = st.columns(5)
+est_sec = calc_est(chunks, max_parallel, model)
+c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1: st.metric("📦 Total Blocks", len(blocks))
 with c2: st.metric("🔢 Chunks",        len(chunks))
 with c3: st.metric("📏 Avg Chunk",     len(blocks) // max(len(chunks), 1))
 with c4: st.metric("⏱️ Est. Time",    f"~{fmt(est_sec)}")
 with c5: st.metric("🚀 Parallel",      max_parallel)
+with c6: st.metric("🤖 Model",         MODEL_DISPLAY.get(model, model.split("/")[-1]))
 
 # ── Chunk preview ─────────────────────────────────────────────────────────────
 with st.expander("📋 Chunk Preview", expanded=False):
