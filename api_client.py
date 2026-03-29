@@ -60,6 +60,8 @@ def clean_encoding(text: str) -> str:
         text = text.replace(bad, good)
     # Catch-all: â + two continuation bytes
     text = re.sub(r'â[\x80-\xbf][\x80-\xbf]', '—', text)
+    # Bare â with no continuation bytes (e.g. "hyper-detailed" → "hyperâdetailed")
+    text = text.replace('â', '-')
     return text
 
 

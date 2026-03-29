@@ -213,6 +213,9 @@ def clean_prompt_text(text: str) -> str:
     # Catch-all: â followed by two continuation bytes = broken UTF-8 sequence
     text = re.sub(r'â[\x80-\xbf][\x80-\xbf]', '—', text)
     text = re.sub(r'â□+', '—', text)
+    # Bare â with no continuation bytes (e.g. "hyper-detailed" → "hyperâdetailed")
+    # This happens when UTF-8 continuation bytes are silently dropped.
+    text = text.replace('â', '-')
 
     # Clean up leading/trailing whitespace
     return text.strip()

@@ -43,7 +43,7 @@ from prompt_engine import (
     infer_scene_context,
 )
 from styles import get_word_count_for_duration
-from output_writer import export_txt, export_xlsx, process_prompt_with_style, count_color_bw, count_noor_prompts, count_fire_accent_prompts, validate_prompt_count
+from output_writer import export_txt, export_xlsx, process_prompt_with_style, count_color_bw, count_noor_prompts, count_fire_accent_prompts, validate_prompt_count, clean_prompt_text
 from story_analyzer import (
     run_story_analysis,
     run_master_plan_analysis_async,
@@ -224,7 +224,7 @@ def render_live_prompts(all_prompts: list, total_blocks: int, mode_code: str = "
 
     # Build full text (image prompts only for copy/download)
     all_text = "\n\n".join(
-        f"Image Prompt {p['block']}:\n{p['image_prompt']}"
+        f"Image Prompt {p['block']}:\n{clean_prompt_text(p['image_prompt'])}"
         for p in sorted_prompts
     )
 
