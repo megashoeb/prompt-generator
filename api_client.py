@@ -12,6 +12,32 @@ from openai import OpenAI
 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# MODEL FALLBACK REGISTRY
+# ─────────────────────────────────────────────────────────────────────────────
+
+MODEL_FALLBACK_ORDER = [
+    "stepfun/step-3.5-flash:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+]
+
+MODEL_DISPLAY_NAMES = {
+    "stepfun/step-3.5-flash:free":           "Step 3.5 Flash",
+    "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super",
+}
+
+
+def get_fallback_model(primary: str) -> str | None:
+    """Return the next model in the fallback order, or None if no fallback exists."""
+    for i, m in enumerate(MODEL_FALLBACK_ORDER):
+        if m == primary and i + 1 < len(MODEL_FALLBACK_ORDER):
+            return MODEL_FALLBACK_ORDER[i + 1]
+    # If primary not in list, return the first entry that isn't primary
+    for m in MODEL_FALLBACK_ORDER:
+        if m != primary:
+            return m
+    return None
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # LEGACY / COMPAT
@@ -88,6 +114,45 @@ def send_chunk_sync_streaming(
                 pass
 
     return full_text
+
+
+def send_chunk_sync_streaming_with_fallback(
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_message: str,
+    on_token=None,
+    on_model_switch=None,
+) -> tuple[str, str, bool]:
+    """Sync streaming call with automatic model fallback.
+
+    Tries ``model`` first; if it raises an exception (timeout, HTTP error, etc.)
+    retries once, then falls back to the next model in MODEL_FALLBACK_ORDER.
+
+    Returns (full_text, model_used, was_fallback).
+    ``on_model_switch(fallback_model_name)`` is called when switching models.
+    """
+    models_to_try = [model]
+    fb = get_fallback_model(model)
+    if fb:
+        models_to_try.append(fb)
+
+    last_exc: Exception | None = None
+    for idx, m in enumerate(models_to_try):
+        is_fallback = idx > 0
+        try:
+            text = send_chunk_sync_streaming(api_key, m, system_prompt, user_message, on_token)
+            return text, m, is_fallback
+        except Exception as exc:
+            last_exc = exc
+            if is_fallback:
+                break  # no more models to try
+            # Notify caller before switching
+            if on_model_switch:
+                fb_name = MODEL_DISPLAY_NAMES.get(models_to_try[1], models_to_try[1]) if len(models_to_try) > 1 else "backup"
+                on_model_switch(fb_name)
+
+    raise RuntimeError(f"All models failed. Last error: {last_exc}") from last_exc
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -453,6 +518,7 @@ async def process_chunks_queue(
             def stop_check() -> bool:
                 return gen_state.get("stop_requested", False) if gen_state else False
 
+            # ── Primary model attempt ─────────────────────────────────────────
             result = await send_chunk_async_streaming(
                 _akey,
                 model,
@@ -463,12 +529,39 @@ async def process_chunks_queue(
                 stop_check=stop_check,
             )
 
+            # ── Auto model fallback if primary exhausted all retries ──────────
+            was_fallback = False
+            model_used   = model
+            if "error" in result and not result.get("cancelled", False):
+                fallback_model = get_fallback_model(model)
+                if fallback_model:
+                    fb_name = MODEL_DISPLAY_NAMES.get(fallback_model, fallback_model)
+                    if on_chunk_update:
+                        on_chunk_update(
+                            chunk_id, "retrying", 0, 0,
+                            f"⚠️ Primary failed → trying {fb_name}…",
+                        )
+                    result = await send_chunk_async_streaming(
+                        _akey,
+                        fallback_model,
+                        system_prompt,
+                        cm["message"],
+                        on_progress=progress_cb,
+                        expected_prompts=expected,
+                        stop_check=stop_check,
+                    )
+                    if "error" not in result:
+                        was_fallback = True
+                        model_used   = fallback_model
+
         # ── Semaphore released — record outcome ───────────────────────────────
         is_cancelled = result.get("cancelled", False)
         is_error     = "error" in result and not is_cancelled
 
-        result["chunk_id"]  = chunk_id
-        result["status"]    = (
+        result["chunk_id"]    = chunk_id
+        result["model_used"]  = model_used
+        result["was_fallback"]= was_fallback
+        result["status"]      = (
             "cancelled" if is_cancelled else ("error" if is_error else "success")
         )
         result["key_label"] = key_label

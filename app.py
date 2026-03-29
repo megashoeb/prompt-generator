@@ -16,7 +16,15 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from srt_parser import parse_srt, auto_chunk, smart_chunk_by_breaks, format_chunk_for_api, block_duration, decode_srt_bytes, fix_mojibake
-from api_client import send_chunk_sync_streaming, process_chunks_queue, validate_api_keys_sync
+from api_client import (
+    send_chunk_sync_streaming,
+    send_chunk_sync_streaming_with_fallback,
+    process_chunks_queue,
+    validate_api_keys_sync,
+    MODEL_DISPLAY_NAMES,
+    MODEL_FALLBACK_ORDER,
+    get_fallback_model,
+)
 from prompt_engine import (
     load_system_prompt,
     load_system_prompt_short,
@@ -163,6 +171,10 @@ def _card_html(chunk_id: int, s: dict) -> str:
     status = s.get("status", "queued")
     pct = s.get("pct", 0)
 
+    was_fallback = s.get("was_fallback", False)
+    model_used   = s.get("model_used", "")
+    model_short  = MODEL_DISPLAY_NAMES.get(model_used, "")
+
     cfg = {
         "queued":     ("#FFC107", "rgba(255,193,7,0.08)",   "🟡", "Queued",     "Waiting for slot…"),
         "processing": ("#2196F3", "rgba(33,150,243,0.10)",  "🔵", "Running",    ""),
@@ -172,20 +184,27 @@ def _card_html(chunk_id: int, s: dict) -> str:
         "stopped":    ("#888",    "rgba(120,120,120,0.10)", "⏹️", "Stopped",    "Cancelled"),
         "retrying":   ("#FF9800", "rgba(255,152,0,0.10)",   "🟠", "Retrying",   ""),
     }
-    color, bg, icon, label, default_detail = cfg.get(
-        status, ("#888", "#111", "❓", status, "")
-    )
+
+    # Fallback-completed chunks get amber styling
+    if status == "done" and was_fallback:
+        color, bg, icon, label = "#FF9800", "rgba(255,152,0,0.12)", "🟢🔄", "Done (fallback)"
+    else:
+        color, bg, icon, label, default_detail = cfg.get(
+            status, ("#888", "#111", "❓", status, "")
+        )
 
     # Build detail line
     key_label = s.get("key_label", "")
     key_sfx   = f" · {key_label}" if key_label else ""
+    model_sfx = f" · {model_short}" if model_short else ""
 
     if status == "processing":
         done = s.get("prompts_done", 0)
         exp  = s.get("expected", "?")
         detail = f"{done}/{exp} prompts{key_sfx}"
     elif status == "done":
-        detail = f"{s.get('prompts_done', '?')} prompts · {fmt(s.get('elapsed', 0))}{key_sfx}"
+        fallback_note = " 🔄" if was_fallback else ""
+        detail = f"{s.get('prompts_done', '?')} prompts · {fmt(s.get('elapsed', 0))}{key_sfx}{model_sfx}{fallback_note}"
     elif status == "queued":
         detail = f"Waiting…{key_sfx}"
     elif status == "error":
@@ -364,11 +383,24 @@ async def _async_generation(gen_state: dict) -> None:
                 "prompts_done": count, "pct": pct,
             }
 
+    # Chunk 1 status helper for model-switch notification
+    def _on_model_switch(fb_name: str) -> None:
+        with (_lock if _lock else nullcontext()):
+            gen_state["chunk_statuses"][1] = {
+                **gen_state["chunk_statuses"][1],
+                "status":     "retrying",
+                "retry_msg":  f"⚠️ Switching to {fb_name}…",
+            }
+
     try:
-        # NOTE: send_chunk_sync_streaming uses requests (blocking).
+        # NOTE: send_chunk_sync_streaming_with_fallback uses requests (blocking).
         # Since we're already in a dedicated background thread, this is fine.
-        chunk1_response = send_chunk_sync_streaming(
-            api_keys[0], model, sys_full, chunk1_msg, on_token
+        chunk1_response, chunk1_model_used, chunk1_was_fallback = (
+            send_chunk_sync_streaming_with_fallback(
+                api_keys[0], model, sys_full, chunk1_msg,
+                on_token=on_token,
+                on_model_switch=_on_model_switch,
+            )
         )
     except Exception as exc:
         gen_state["chunk_statuses"][1] = {
@@ -390,8 +422,13 @@ async def _async_generation(gen_state: dict) -> None:
     gen_state["last_prompt"]      = extract_last_prompt(chunk1_response)
     elapsed1 = time.time() - gen_state["chunk_statuses"][1]["start_time"]
     gen_state["chunk_statuses"][1] = {
-        "status": "done", "elapsed": elapsed1,
-        "prompts_done": len(chunk1_prompts), "pct": 100,
+        "status":       "done",
+        "elapsed":      elapsed1,
+        "prompts_done": len(chunk1_prompts),
+        "pct":          100,
+        "model_used":   chunk1_model_used,
+        "was_fallback": chunk1_was_fallback,
+        "key_label":    "Key 1",
     }
     gen_state["chunk1_live"] = ""   # clear live display
 
@@ -508,6 +545,16 @@ async def _async_generation(gen_state: dict) -> None:
                         _p["image_prompt"], visual_style, _p["image_prompt"]
                     )
             gen_state["all_prompts"].extend(_cont_prompts)
+            # Propagate fallback info into chunk_statuses for card rendering
+            cid = r.get("chunk_id")
+            if cid and r.get("was_fallback"):
+                with (_lock if _lock else nullcontext()):
+                    existing = gen_state["chunk_statuses"].get(cid, {})
+                    gen_state["chunk_statuses"][cid] = {
+                        **existing,
+                        "model_used":  r.get("model_used", model),
+                        "was_fallback": True,
+                    }
         elif r.get("status") in ("error",):
             gen_state["errors"].append(
                 f"Chunk {r['chunk_id']}: {r.get('error', 'Unknown')[:200]}"
@@ -521,6 +568,9 @@ async def _async_generation(gen_state: dict) -> None:
     for _p in gen_state["all_prompts"]:
         _by_block[_p["block"]] = _p
     gen_state["all_prompts"] = sorted(_by_block.values(), key=lambda x: x["block"])
+
+    # Store chunk results for model summary display
+    gen_state["chunk_results"] = results
 
     # Remove extra prompts (block numbers beyond expected range)
     _total = gen_state.get("total_blocks", 0)
@@ -910,6 +960,39 @@ def render_results_ui() -> None:
         f"🤖 {_model_label} · "
         f"Style: {_style_label}{_custom_note}"
     )
+
+    # ── Model usage summary (shown when fallback was triggered) ──────────────
+    _chunk_results   = gen_state.get("chunk_results", [])
+    _chunk1_status   = gen_state.get("chunk_statuses", {}).get(1, {})
+    # Build combined result list: chunk 1 + parallel chunks
+    _all_chunk_results = []
+    if _chunk1_status:
+        _all_chunk_results.append({
+            "model_used":  _chunk1_status.get("model_used", gen_state.get("model", "")),
+            "was_fallback": _chunk1_status.get("was_fallback", False),
+            "status":      "success" if _chunk1_status.get("status") == "done" else "error",
+        })
+    _all_chunk_results += [r for r in _chunk_results if r]
+
+    _fallback_chunks = [r for r in _all_chunk_results if r.get("was_fallback")]
+    if _fallback_chunks:
+        # Count by model
+        _model_counts: dict[str, int] = {}
+        for r in _all_chunk_results:
+            mu = r.get("model_used") or gen_state.get("model", "")
+            mn = MODEL_DISPLAY_NAMES.get(mu, mu.split("/")[-1] if mu else "Unknown")
+            _model_counts[mn] = _model_counts.get(mn, 0) + 1
+
+        _mcols = st.columns(len(_model_counts))
+        for _ci, (_mn, _mc) in enumerate(_model_counts.items()):
+            with _mcols[_ci]:
+                st.metric(f"🤖 {_mn}", f"{_mc} chunks")
+
+        st.info(
+            f"ℹ️ **{len(_fallback_chunks)} chunk(s)** were processed by backup model "
+            f"because the primary model failed. Output quality is not affected. "
+            f"Fallback chunks are marked **🟢🔄** in the progress cards above."
+        )
 
     # History 2 — Color / B&W breakdown
     if _used_style == "history_2" and all_prompts:
