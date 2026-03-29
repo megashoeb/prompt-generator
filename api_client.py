@@ -75,6 +75,50 @@ def get_fallback_model(primary: str) -> str | None:
     return None
 
 
+def create_slim_system_prompt(full_prompt: str) -> str:
+    """Create a shorter system prompt for continuation chunks (2+).
+
+    Removes pre-analysis generation instructions (story summary creation,
+    character card creation, scene map creation) since these are already
+    provided in the user message for continuation chunks.
+
+    Keeps all visual style rules, output format rules, count rules,
+    historical accuracy rules, era-appropriate element rules, and safety rules.
+    """
+    slim = full_prompt
+
+    # Remove ===== PHASE 1 ===== / PRE-ANALYSIS / MANDATORY BEFORE sections
+    slim = re.sub(
+        r'={5,}[^\n]*(?:PHASE\s*1|PRE-ANALYSIS|MANDATORY[^\n]*BEFORE)[^\n]*\n'
+        r'.*?(?=\n={5,}|\Z)',
+        '',
+        slim,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+
+    # Remove "Before generating any prompts, you MUST …" paragraphs
+    slim = re.sub(
+        r'(?:Before generating any prompts[,\s]+you MUST|THIS STEP IS MANDATORY)'
+        r'.*?(?=\n={5,}|\n#{3,}|\Z)',
+        '',
+        slim,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+
+    # Clean up excessive blank lines left by removed sections
+    slim = re.sub(r'\n{4,}', '\n\n\n', slim)
+
+    # Prepend a short continuation header
+    header = (
+        "You are generating continuation image prompts for a long-form documentary.\n"
+        "Character Cards, Scene Location Map, and Story Analysis are provided in "
+        "the user message — use them exactly as written. "
+        "Do NOT re-generate pre-analysis sections.\n"
+        "Jump directly to generating Image Prompts.\n\n"
+    )
+    return (header + slim).strip()
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # LEGACY / COMPAT
 # ─────────────────────────────────────────────────────────────────────────────
@@ -201,6 +245,7 @@ async def send_chunk_async_streaming(
     system_prompt: str,
     user_message: str,
     on_progress=None,
+    on_text=None,
     expected_prompts: int = 1,
     stop_check=None,
     max_retries: int = 3,
@@ -290,6 +335,8 @@ async def send_chunk_async_streaming(
                             if delta:
                                 full_text  += delta
                                 chars_rx   += len(delta)
+                                if on_text:
+                                    on_text(delta, full_text)
                                 new_count   = len(
                                     re.findall(
                                         r"Image Prompt\s+\d+\s*:",
@@ -465,9 +512,12 @@ async def process_chunks_queue(
     n_keys      = len(api_keys)
     max_per_key = max(1, max_parallel // n_keys)
 
-    # Per-key semaphores
+    # Smart semaphore distribution: divide max_parallel evenly across keys,
+    # then give the remainder slots (one each) to the first N keys.
+    _remainder = max(0, max_parallel - max_per_key * n_keys)
     key_semaphores: dict[str, asyncio.Semaphore] = {
-        k: asyncio.Semaphore(max_per_key) for k in api_keys
+        k: asyncio.Semaphore(max_per_key + (1 if i < _remainder else 0))
+        for i, k in enumerate(api_keys)
     }
 
     # Pause state — key → time.time() when pause expires
@@ -509,11 +559,16 @@ async def process_chunks_queue(
         assigned_key = cm["api_key"]
         key_label    = cm.get("key_label", "Key 1")
 
-        # ── Check stop before queuing ─────────────────────────────────────────
+        # ── Check stop/pause before queuing ──────────────────────────────────
         if gen_state and gen_state.get("stop_requested"):
-            results[idx] = {"chunk_id": chunk_id, "status": "cancelled", "content": ""}
+            _paused = gen_state.get("pause_requested", False)
+            results[idx] = {"chunk_id": chunk_id,
+                            "status": "paused" if _paused else "cancelled",
+                            "content": ""}
             if on_chunk_update:
-                on_chunk_update(chunk_id, "stopped", 0, 0, "Cancelled before queuing")
+                _ev = "paused" if _paused else "stopped"
+                on_chunk_update(chunk_id, _ev, 0, 0,
+                                "Paused" if _paused else "Cancelled before queuing")
             return
 
         # ── Reroute if assigned key is currently paused ───────────────────────
@@ -535,11 +590,16 @@ async def process_chunks_queue(
         # ── Acquire the key's semaphore slot ──────────────────────────────────
         async with key_semaphores[active_key]:
 
-            # Re-check stop after waiting in queue
+            # Re-check stop/pause after waiting in queue
             if gen_state and gen_state.get("stop_requested"):
-                results[idx] = {"chunk_id": chunk_id, "status": "cancelled", "content": ""}
+                _paused = gen_state.get("pause_requested", False)
+                results[idx] = {"chunk_id": chunk_id,
+                                "status": "paused" if _paused else "cancelled",
+                                "content": ""}
                 if on_chunk_update:
-                    on_chunk_update(chunk_id, "stopped", 0, 0, "Cancelled while queued")
+                    _ev = "paused" if _paused else "stopped"
+                    on_chunk_update(chunk_id, _ev, 0, 0,
+                                    "Paused" if _paused else "Cancelled while queued")
                 return
 
             # Signal slot acquired; pass key_label via the msg parameter

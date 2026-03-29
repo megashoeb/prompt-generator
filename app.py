@@ -19,11 +19,13 @@ from srt_parser import parse_srt, auto_chunk, smart_chunk_by_breaks, format_chun
 from api_client import (
     send_chunk_sync_streaming,
     send_chunk_sync_streaming_with_fallback,
+    send_chunk_async_streaming,
     process_chunks_queue,
     validate_api_keys_sync,
     MODEL_DISPLAY_NAMES,
     MODEL_FALLBACK_ORDER,
     get_fallback_model,
+    create_slim_system_prompt,
 )
 from prompt_engine import (
     load_system_prompt,
@@ -99,6 +101,19 @@ def calc_est(chunks: list, max_par: int, model: str = "stepfun/step-3.5-flash:fr
     return c1 + rounds * (avg * 350 / tps)
 
 
+def calculate_optimal_chunk_size(total_blocks: int, num_keys: int, max_parallel: int) -> int:
+    """Return the recommended chunk size for fastest generation.
+
+    Target: enough chunks to saturate all parallel slots, with min 15 and max 35 blocks.
+    Formula: total_blocks / (max_parallel + 2) rounded to [15, 35].
+    """
+    if total_blocks <= 0:
+        return 30
+    ideal_chunks = max_parallel + 2   # fill all parallel slots + chunk 1 + buffer
+    ideal_size   = total_blocks // ideal_chunks
+    return max(15, min(35, ideal_size))
+
+
 def check_visual_consistency(prompts_dict: dict, master_plan: str) -> list[str]:
     """Flag prompts that may break visual consistency based on the Master Story Plan.
 
@@ -164,6 +179,84 @@ def copy_btn(text: str, label: str = "📋 Copy All Prompts", height: int = 52):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LIVE PROMPT DISPLAY
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _compress_ranges(nums: list) -> str:
+    """Convert [1,2,3,5,6,10] → '1–3, 5–6, 10'."""
+    if not nums:
+        return "None"
+    nums = sorted(set(nums))
+    ranges, start, prev = [], nums[0], nums[0]
+    for n in nums[1:]:
+        if n == prev + 1:
+            prev = n
+        else:
+            ranges.append(f"{start}–{prev}" if start != prev else str(start))
+            start = prev = n
+    ranges.append(f"{start}–{prev}" if start != prev else str(start))
+    return ", ".join(ranges)
+
+
+def render_live_prompts(all_prompts: list, total_blocks: int, mode_code: str = "A",
+                        visual_style: str = "dark_fantasy") -> None:
+    """Show all generated prompts sorted by block number with copy/download."""
+    if not all_prompts:
+        st.caption("📝 Prompts will appear here as chunks complete…")
+        return
+
+    sorted_prompts = sorted(all_prompts, key=lambda p: p["block"])
+    nums           = [p["block"] for p in sorted_prompts]
+    pct            = len(nums) / total_blocks if total_blocks > 0 else 0
+
+    # Header + progress
+    hc1, hc2 = st.columns([3, 1])
+    with hc1:
+        st.markdown(f"##### 📝 {len(nums)}/{total_blocks} Prompts Ready")
+    with hc2:
+        st.progress(pct)
+
+    # Range info
+    st.caption(f"✅ Ready: {_compress_ranges(nums)}")
+    missing = sorted(set(range(1, total_blocks + 1)) - set(nums))
+    if missing:
+        st.caption(f"⏳ Pending: {_compress_ranges(missing)}")
+
+    # Build full text (image prompts only for copy/download)
+    all_text = "\n\n".join(
+        f"Image Prompt {p['block']}:\n{p['image_prompt']}"
+        for p in sorted_prompts
+    )
+
+    # Copy All button (reuse existing helper)
+    copy_btn(all_text, f"📋 Copy All {len(nums)} Prompts")
+
+    # Download buttons
+    dc1, dc2 = st.columns(2)
+    with dc1:
+        st.download_button(
+            f"⬇️ .txt ({len(nums)} prompts)",
+            data=all_text,
+            file_name="prompts_live.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+    with dc2:
+        _xd = export_xlsx(sorted_prompts, mode_code, visual_style)
+        st.download_button(
+            f"⬇️ .xlsx ({len(nums)} prompts)",
+            data=_xd,
+            file_name="prompts_live.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+        )
+
+    # Preview (collapsed by default to save space during generation)
+    with st.expander(f"👁️ Preview all {len(nums)} prompts", expanded=False):
+        st.code(all_text[:10000] + ("…" if len(all_text) > 10000 else ""), language=None)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # CHUNK STATUS CARD RENDERER
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -183,6 +276,7 @@ def _card_html(chunk_id: int, s: dict) -> str:
         "error":      ("#F44336", "rgba(244,67,54,0.10)",   "🔴", "Error",      ""),
         "stopped":    ("#888",    "rgba(120,120,120,0.10)", "⏹️", "Stopped",    "Cancelled"),
         "retrying":   ("#FF9800", "rgba(255,152,0,0.10)",   "🟠", "Retrying",   ""),
+        "paused":     ("#9C27B0", "rgba(156,39,176,0.10)",  "⏸️", "Paused",     "Will resume"),
     }
 
     # Fallback-completed chunks get amber styling
@@ -279,9 +373,16 @@ async def _async_generation(gen_state: dict) -> None:
     if visual_style in ("dark_fantasy", "custom"):
         sys_full  = load_system_prompt()
         sys_short = load_system_prompt_short()
+        # dark_fantasy already has an optimised short prompt — use it as slim base
+        sys_slim  = sys_short
     else:
         sys_full  = load_system_prompt_for_style(visual_style)
-        sys_short = sys_full   # same file for all chunks
+        sys_short = sys_full
+        # Auto-generate slim prompt by stripping pre-analysis sections
+        sys_slim  = create_slim_system_prompt(sys_full)
+
+    # Store for resume
+    gen_state["system_prompt_slim"] = sys_slim
 
     # ── STEP 0: MASTER STORY PLAN ANALYSIS ───────────────────────────────────
     # Run once before any chunks. Produces a plan that every chunk receives.
@@ -322,124 +423,120 @@ async def _async_generation(gen_state: dict) -> None:
     if gen_state.get("stop_requested"):
         return
 
-    # ── CHUNK 1 ──────────────────────────────────────────────────────────────
-    chunk1 = chunks[0]
-    exp1   = chunk1[-1].index - chunk1[0].index + 1
+    # ─────────────────────────────────────────────────────────────────────────
+    # CHUNK 1 — SPLIT INTO 1A (pre-analysis) + 1B (prompts)
+    #
+    # Speed advantage:
+    #   OLD: 0:00 Chunk 1 starts → 3:30 Chunk 1 done → chunks 2+ start
+    #   NEW: 0:00 Call 1A starts → 0:30 1A done (character cards ready)
+    #        0:30 Call 1B starts  →  0:30 chunks 2+ start simultaneously
+    #        Result: ~2-3 minutes saved on the bottleneck
+    # ─────────────────────────────────────────────────────────────────────────
+    chunk1      = chunks[0]
+    block_start1 = chunk1[0].index
+    block_end1   = chunk1[-1].index
+    exp1         = block_end1 - block_start1 + 1
+    _lock        = gen_state.get("_lock")
+    _chunk1_t0   = time.time()
+
     gen_state["chunk_statuses"][1] = {
-        "status": "processing", "start_time": time.time(),
+        "status": "processing", "start_time": _chunk1_t0,
         "prompts_done": 0, "pct": 0, "expected": exp1,
-        "key_label": "Key 1",
+        "key_label": "Key 1", "phase": "1A: Pre-analysis",
     }
+    gen_state["chunk1_phase"] = "1A: Pre-analysis"
 
-    if _is_history4:
-        chunk1_msg = build_chunk1_message_history4(
-            chunk              = chunk1,
-            total_blocks       = gen_state["total_blocks"],
-            mode               = mode_code,
-            master_story_plan  = master_plan,
+    def stop_check_1() -> bool:
+        return gen_state.get("stop_requested", False)
+
+    # ── BUILD CALL 1A MESSAGE (pre-analysis only — no Image Prompts) ──────────
+    _plan_sec_1a = ""
+    if master_plan:
+        _plan_sec_1a = (
+            f"\nMASTER STORY PLAN (for character and scene context):\n"
+            f"{master_plan[:3000]}{'...' if len(master_plan) > 3000 else ''}\n\n"
         )
-    elif _is_short_style:
-        chunk1_msg = build_chunk1_message_woodcut(
-            srt_text          = format_chunk_for_api(chunk1),
-            block_start       = chunk1[0].index,
-            block_end         = chunk1[-1].index,
-            total_blocks      = gen_state["total_blocks"],
-            mode              = mode_code,
-            master_story_plan = master_plan,
-        )
-    else:
-        chunk1_msg = build_chunk1_message(
-            srt_text          = format_chunk_for_api(chunk1),
-            block_start       = chunk1[0].index,
-            block_end         = chunk1[-1].index,
-            total_blocks      = gen_state["total_blocks"],
-            mode              = mode_code,
-            master_story_plan = master_plan,
-        )
-        if visual_style == "custom" and custom_style:
-            chunk1_msg += (
-                f"\n\nSTYLE OVERRIDE: For every Image Prompt, end with this "
-                f"style line instead of the default dark fantasy style: "
-                f"{custom_style}"
-            )
 
-    _chars   = [0]
-    _last_ui = [0.0]
+    chunk1a_msg = (
+        f"ANALYSIS STEP — Output ONLY the pre-analysis sections. "
+        f"Do NOT generate any Image Prompts.\n\n"
+        f"Output exactly these sections:\n"
+        f"1. STORY SUMMARY (2–3 paragraphs about the full narrative arc)\n"
+        f"2. CHARACTER REGISTRY — full locked Character Cards for every named character\n"
+        f"   (exact appearance, clothing, features that must appear in every prompt)\n"
+        f"3. SCENE LOCATION MAP — which block ranges occur in which locations\n"
+        f"4. COLOR/MOOD MAP — lighting and color mood per narrative phase\n\n"
+        f"STOP after the Color/Mood Map. Do not write Image Prompt 1 or any prompts.\n\n"
+        f"The full SRT has {gen_state['total_blocks']} blocks. "
+        f"This chunk covers blocks {block_start1}–{block_end1}.\n"
+        f"{_plan_sec_1a}"
+        f"SRT blocks:\n\n{format_chunk_for_api(chunk1)}"
+    )
 
-    _lock = gen_state.get("_lock")
+    # Live text update during 1A
+    _last_1a_ui = [0.0]
 
-    def on_token(delta: str, full_text: str) -> None:
-        _chars[0] += len(delta)
+    def on_1a_text(delta: str, full_text: str) -> None:
         now = time.time()
-        if now - _last_ui[0] < 0.3:
+        if now - _last_1a_ui[0] < 0.4:
             return
-        _last_ui[0] = now
-        count = len(re.findall(r"Image Prompt\s+\d+\s*:", full_text, re.IGNORECASE))
-        pct   = min(100, int(count / exp1 * 100)) if exp1 > 0 else 0
+        _last_1a_ui[0] = now
         with (_lock if _lock else nullcontext()):
-            gen_state["chunk1_live"]       = full_text
-            gen_state["chunk_statuses"][1] = {
-                **gen_state["chunk_statuses"][1],
-                "prompts_done": count, "pct": pct,
-            }
+            gen_state["chunk1_live"] = full_text
 
-    # Chunk 1 status helper for model-switch notification
-    def _on_model_switch(fb_name: str) -> None:
-        with (_lock if _lock else nullcontext()):
-            gen_state["chunk_statuses"][1] = {
-                **gen_state["chunk_statuses"][1],
-                "status":     "retrying",
-                "retry_msg":  f"⚠️ Switching to {fb_name}…",
-            }
+    # ── CALL 1A: PRE-ANALYSIS ─────────────────────────────────────────────────
+    result_1a = await send_chunk_async_streaming(
+        api_keys[0], model, sys_full, chunk1a_msg,
+        on_text=on_1a_text,
+        expected_prompts=0,   # no prompts expected — progress via char count only
+        stop_check=stop_check_1,
+    )
 
-    try:
-        # NOTE: send_chunk_sync_streaming_with_fallback uses requests (blocking).
-        # Since we're already in a dedicated background thread, this is fine.
-        chunk1_response, chunk1_model_used, chunk1_was_fallback = (
-            send_chunk_sync_streaming_with_fallback(
-                api_keys[0], model, sys_full, chunk1_msg,
-                on_token=on_token,
-                on_model_switch=_on_model_switch,
+    # Model fallback for 1A
+    chunk1a_model = model
+    if "error" in result_1a and not result_1a.get("cancelled"):
+        _fb = get_fallback_model(model)
+        if _fb:
+            result_1a = await send_chunk_async_streaming(
+                api_keys[0], _fb, sys_full, chunk1a_msg,
+                on_text=on_1a_text,
+                expected_prompts=0,
+                stop_check=stop_check_1,
             )
-        )
-    except Exception as exc:
+            if "error" not in result_1a:
+                chunk1a_model = _fb
+
+    if result_1a.get("cancelled") or gen_state.get("stop_requested"):
+        return
+
+    if "error" in result_1a:
         gen_state["chunk_statuses"][1] = {
-            "status": "error", "error_msg": str(exc)[:200],
+            "status": "error",
+            "error_msg": result_1a.get("error", "Unknown")[:200],
             "prompts_done": 0, "pct": 0, "key_label": "Key 1",
         }
-        gen_state["fatal_error"] = f"Chunk 1 failed: {exc}"
+        gen_state["fatal_error"] = f"Chunk 1 analysis (1A) failed: {result_1a.get('error')}"
         return
 
-    chunk1_prompts = extract_all_prompts(chunk1_response)
-    if _is_short_style:
-        for _p in chunk1_prompts:
-            _p["image_prompt"] = process_prompt_with_style(
-                _p["image_prompt"], visual_style, _p["image_prompt"]
-            )
-    gen_state["all_prompts"].extend(chunk1_prompts)
-    gen_state["chunk1_response"]  = chunk1_response
-    gen_state["character_cards"]  = extract_character_cards(chunk1_response)
-    gen_state["last_prompt"]      = extract_last_prompt(chunk1_response)
-    elapsed1 = time.time() - gen_state["chunk_statuses"][1]["start_time"]
-    gen_state["chunk_statuses"][1] = {
-        "status":       "done",
-        "elapsed":      elapsed1,
-        "prompts_done": len(chunk1_prompts),
-        "pct":          100,
-        "model_used":   chunk1_model_used,
-        "was_fallback": chunk1_was_fallback,
-        "key_label":    "Key 1",
-    }
-    gen_state["chunk1_live"] = ""   # clear live display
+    pre_analysis_text = result_1a["content"]
+    character_cards_1a = extract_character_cards(pre_analysis_text)
+    gen_state["character_cards"] = character_cards_1a
 
-    if len(chunks) <= 1 or gen_state.get("stop_requested"):
-        return
+    # Transition: 1A done → starting 1B
+    with (_lock if _lock else nullcontext()):
+        gen_state["chunk1_phase"] = "1B: Generating Prompts"
+        gen_state["chunk_statuses"][1] = {
+            **gen_state["chunk_statuses"][1],
+            "phase": "1B: Generating Prompts",
+        }
+    gen_state["chunk1_live"] = ""   # clear 1A live text
 
-    # ── CHUNKS 2+ ────────────────────────────────────────────────────────────
+    # ── BUILD CONTINUATION MESSAGES (chunks 2+) using character cards from 1A ─
+    # These start immediately after 1A — no need to wait for 1B to finish.
     n_keys = len(api_keys)
     chunk_messages = []
     for i, chunk in enumerate(chunks[1:], 2):
-        chunk_idx    = i - 2                             # 0-based for round-robin
+        chunk_idx    = i - 2
         assigned_key = api_keys[chunk_idx % n_keys]
         key_label    = f"Key {api_keys.index(assigned_key) + 1}"
         expected     = chunk[-1].index - chunk[0].index + 1
@@ -447,42 +544,32 @@ async def _async_generation(gen_state: dict) -> None:
             "status": "queued", "prompts_done": 0, "pct": 0,
             "expected": expected, "key_label": key_label,
         }
+        # last_prompt is "" here because 1B hasn't run yet — handled gracefully
+        # by the message builders when last_prompt is an empty string.
         if _is_history4:
             msg = build_continuation_chunk_message_history4(
-                chunk              = chunk,
-                chunk_number       = i,
-                total_chunks       = len(chunks),
-                character_cards    = gen_state["character_cards"],
-                last_prompt        = gen_state["last_prompt"],
-                total_blocks       = gen_state["total_blocks"],
-                mode               = mode_code,
-                master_story_plan  = master_plan,
+                chunk=chunk, chunk_number=i, total_chunks=len(chunks),
+                character_cards=character_cards_1a, last_prompt="",
+                total_blocks=gen_state["total_blocks"],
+                mode=mode_code, master_story_plan=master_plan,
             )
         elif _is_short_style:
             msg = build_continuation_chunk_message_woodcut(
-                srt_text          = format_chunk_for_api(chunk),
-                chunk_number      = i,
-                total_chunks      = len(chunks),
-                block_start       = chunk[0].index,
-                block_end         = chunk[-1].index,
-                character_cards   = gen_state["character_cards"],
-                last_prompt       = gen_state["last_prompt"],
-                total_blocks      = gen_state["total_blocks"],
-                mode              = mode_code,
-                master_story_plan = master_plan,
+                srt_text=format_chunk_for_api(chunk),
+                chunk_number=i, total_chunks=len(chunks),
+                block_start=chunk[0].index, block_end=chunk[-1].index,
+                character_cards=character_cards_1a, last_prompt="",
+                total_blocks=gen_state["total_blocks"],
+                mode=mode_code, master_story_plan=master_plan,
             )
         else:
             msg = build_continuation_chunk_message(
-                srt_text          = format_chunk_for_api(chunk),
-                chunk_number      = i,
-                total_chunks      = len(chunks),
-                block_start       = chunk[0].index,
-                block_end         = chunk[-1].index,
-                character_cards   = gen_state["character_cards"],
-                last_prompt       = gen_state["last_prompt"],
-                scene_context     = infer_scene_context(format_chunk_for_api(chunk)),
-                mode              = mode_code,
-                master_story_plan = master_plan,
+                srt_text=format_chunk_for_api(chunk),
+                chunk_number=i, total_chunks=len(chunks),
+                block_start=chunk[0].index, block_end=chunk[-1].index,
+                character_cards=character_cards_1a, last_prompt="",
+                scene_context=infer_scene_context(format_chunk_for_api(chunk)),
+                mode=mode_code, master_story_plan=master_plan,
             )
             if visual_style == "custom" and custom_style:
                 msg += (
@@ -495,6 +582,95 @@ async def _async_generation(gen_state: dict) -> None:
             "api_key": assigned_key, "key_label": key_label,
         })
 
+    # Store for resume
+    gen_state["chunk_messages"] = chunk_messages
+
+    # ── BUILD CALL 1B MESSAGE (prompts only, character cards provided) ─────────
+    _mode_text1 = (
+        "Option A: Image Prompts Only" if mode_code == "A"
+        else "Option B: Image + Video Prompts"
+    )
+    _plan_sec_1b = ""
+    if master_plan:
+        _plan_sec_1b = (
+            f"\nMASTER STORY PLAN (follow for blocks {block_start1}–{block_end1}):\n"
+            f"{master_plan[:2000]}{'...' if len(master_plan) > 2000 else ''}\n\n"
+        )
+
+    chunk1b_msg = (
+        f"Selected mode: {_mode_text1}\n\n"
+        f"CHARACTER CARDS (use these exact descriptions for every character appearance):\n"
+        f"{character_cards_1a or 'No character cards — use story context.'}\n\n"
+        f"{_plan_sec_1b}"
+        f"Generate Image Prompt {block_start1} through Image Prompt {block_end1}.\n"
+        f"EXACTLY {exp1} prompts. Start directly with Image Prompt {block_start1}. "
+        f"Do NOT output Story Summary, Character Registry, or any pre-analysis again.\n\n"
+        f"SRT blocks:\n\n{format_chunk_for_api(chunk1)}\n\n"
+        f"FINAL REMINDER: Output EXACTLY {exp1} prompts numbered "
+        f"Image Prompt {block_start1} through Image Prompt {block_end1}. "
+        f"Count your prompts. Every block gets exactly one prompt."
+    )
+    if visual_style == "custom" and custom_style:
+        chunk1b_msg += (
+            f"\n\nSTYLE OVERRIDE: For every Image Prompt, end with this "
+            f"style line instead of the default dark fantasy style: {custom_style}"
+        )
+
+    # Store for resume (allows chunk 1B to be re-run without chunk 1A)
+    gen_state["chunk1b_message"] = chunk1b_msg
+
+    # 1B live update callbacks
+    _last_1b_ui = [0.0]
+    _1b_meta    = {"model_used": model, "was_fallback": False}
+
+    def on_1b_text(delta: str, full_text: str) -> None:
+        now = time.time()
+        if now - _last_1b_ui[0] < 0.3:
+            return
+        _last_1b_ui[0] = now
+        with (_lock if _lock else nullcontext()):
+            gen_state["chunk1_live"] = full_text
+
+    def on_1b_progress(event: str, prompts_done: int, pct: int, msg: str) -> None:
+        now_pct = min(100, int(prompts_done / exp1 * 100)) if exp1 > 0 else pct
+        with (_lock if _lock else nullcontext()):
+            gen_state["chunk_statuses"][1] = {
+                **gen_state["chunk_statuses"][1],
+                "prompts_done": prompts_done, "pct": now_pct,
+            }
+
+    async def _run_chunk1b() -> dict:
+        """Run Call 1B with automatic model fallback."""
+        r = await send_chunk_async_streaming(
+            api_keys[0], _1b_meta["model_used"], sys_slim, chunk1b_msg,
+            on_progress=on_1b_progress,
+            on_text=on_1b_text,
+            expected_prompts=exp1,
+            stop_check=stop_check_1,
+        )
+        if "error" in r and not r.get("cancelled"):
+            _fb = get_fallback_model(model)
+            if _fb:
+                with (_lock if _lock else nullcontext()):
+                    gen_state["chunk_statuses"][1] = {
+                        **gen_state["chunk_statuses"][1],
+                        "status": "retrying",
+                        "retry_msg": f"⚠️ Switching to {MODEL_DISPLAY_NAMES.get(_fb, _fb)}…",
+                    }
+                r2 = await send_chunk_async_streaming(
+                    api_keys[0], _fb, sys_slim, chunk1b_msg,
+                    on_progress=on_1b_progress,
+                    on_text=on_1b_text,
+                    expected_prompts=exp1,
+                    stop_check=stop_check_1,
+                )
+                if "error" not in r2:
+                    _1b_meta["model_used"]   = _fb
+                    _1b_meta["was_fallback"] = True
+                    return r2
+        return r
+
+    # ── on_chunk_update callback (for process_chunks_queue) ───────────────────
     def on_chunk_update(chunk_id: int, event: str, prompts_done: int, pct: int, msg: str) -> None:
         with (_lock if _lock else nullcontext()):
             s = dict(gen_state["chunk_statuses"].get(chunk_id, {}))
@@ -502,7 +678,6 @@ async def _async_generation(gen_state: dict) -> None:
                 gen_state["chunk_statuses"][chunk_id] = {
                     **s, "status": "processing",
                     "start_time": time.time(), "prompts_done": 0, "pct": 0,
-                    # msg carries the key_label string sent by process_one
                     "key_label": msg or s.get("key_label", ""),
                 }
             elif event == "progress":
@@ -513,28 +688,89 @@ async def _async_generation(gen_state: dict) -> None:
                 gen_state["chunk_statuses"][chunk_id] = {
                     **s, "status": "retrying", "retry_msg": msg,
                 }
-            elif event in ("done", "error", "stopped"):
+            elif event in ("done", "error", "stopped", "paused"):
                 elapsed = (
                     time.time() - s.get("start_time", time.time())
                     if s.get("start_time") else 0
                 )
                 gen_state["chunk_statuses"][chunk_id] = {
                     **s,
-                    "status": event,
+                    "status": "paused" if event == "paused" else event,
                     "elapsed": elapsed,
                     "pct": 100 if event == "done" else s.get("pct", 0),
                     "error_msg": msg if event == "error" else "",
                 }
 
-    results = await process_chunks_queue(
-        api_keys      = api_keys,
-        model         = model,
-        system_prompt = sys_short,
-        chunk_messages= chunk_messages,
-        max_parallel  = max_parallel,
-        on_chunk_update = on_chunk_update,
-        gen_state     = gen_state,
-    )
+    # ── RUN 1B AND PARALLEL CHUNKS SIMULTANEOUSLY ─────────────────────────────
+    # 1B generates chunk 1 prompts while chunks 2+ run in parallel.
+    # Both start at the same time — no waiting for 1B before chunks 2+ can go.
+    if len(chunks) > 1 and not gen_state.get("stop_requested"):
+        gathered = await asyncio.gather(
+            _run_chunk1b(),
+            process_chunks_queue(
+                api_keys=api_keys, model=model,
+                system_prompt=sys_slim,
+                chunk_messages=chunk_messages,
+                max_parallel=max_parallel,
+                on_chunk_update=on_chunk_update,
+                gen_state=gen_state,
+            ),
+            return_exceptions=True,
+        )
+        chunk1b_result = gathered[0]
+        results        = gathered[1] if not isinstance(gathered[1], Exception) else []
+    else:
+        chunk1b_result = await _run_chunk1b()
+        results        = []
+
+    # ── PROCESS CALL 1B RESULT ────────────────────────────────────────────────
+    if isinstance(chunk1b_result, Exception):
+        gen_state["chunk_statuses"][1] = {
+            "status": "error", "error_msg": str(chunk1b_result)[:200],
+            "prompts_done": 0, "pct": 0, "key_label": "Key 1",
+        }
+        gen_state["fatal_error"] = f"Chunk 1B failed: {chunk1b_result}"
+        return
+
+    if chunk1b_result.get("cancelled") or gen_state.get("stop_requested"):
+        return
+
+    if "error" in chunk1b_result:
+        gen_state["chunk_statuses"][1] = {
+            "status": "error",
+            "error_msg": chunk1b_result.get("error", "")[:200],
+            "prompts_done": 0, "pct": 0, "key_label": "Key 1",
+        }
+        gen_state["fatal_error"] = f"Chunk 1B failed: {chunk1b_result.get('error')}"
+        return
+
+    # Combine: clean pre-analysis (no stray prompts) + chunk 1B prompts
+    _pre_end     = pre_analysis_text.find("Image Prompt 1")
+    pre_clean    = (pre_analysis_text[:_pre_end].strip()
+                    if _pre_end > 0 else pre_analysis_text.strip())
+    chunk1_response = pre_clean + "\n\n" + chunk1b_result["content"]
+
+    chunk1_prompts = extract_all_prompts(chunk1b_result["content"])
+    if _is_short_style:
+        for _p in chunk1_prompts:
+            _p["image_prompt"] = process_prompt_with_style(
+                _p["image_prompt"], visual_style, _p["image_prompt"]
+            )
+    gen_state["all_prompts"].extend(chunk1_prompts)
+    gen_state["chunk1_response"] = chunk1_response
+    gen_state["last_prompt"]     = extract_last_prompt(chunk1b_result["content"])
+    elapsed1 = time.time() - _chunk1_t0
+    gen_state["chunk_statuses"][1] = {
+        "status":       "done",
+        "elapsed":      elapsed1,
+        "prompts_done": len(chunk1_prompts),
+        "pct":          100,
+        "model_used":   _1b_meta["model_used"],
+        "was_fallback": _1b_meta["was_fallback"],
+        "key_label":    "Key 1",
+    }
+    gen_state["chunk1_live"]  = ""
+    gen_state["chunk1_phase"] = ""
 
     for r in results:
         if r.get("status") == "success" and r.get("content"):
@@ -595,6 +831,12 @@ async def _async_generation(gen_state: dict) -> None:
         gen_state["all_prompts"], _total
     )
 
+    # Mark paused if user pressed Pause during generation
+    if gen_state.get("pause_requested"):
+        gen_state["is_paused"] = True
+    else:
+        gen_state["is_paused"] = False
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GENERATION UI (shown while is_generating == True)
@@ -619,11 +861,12 @@ def render_generation_ui() -> None:
     lock       = gen_state.get("_lock")
     _ctx       = lock if lock else nullcontext()
 
-    # ── Stop button ──────────────────────────────────────────────────────────
-    stop_col, _ = st.columns([1, 4])
-    with stop_col:
-        if st.button("⏹️ Stop Generation", type="secondary", use_container_width=True):
-            gen_state["stop_requested"] = True
+    # ── Pause button ─────────────────────────────────────────────────────────
+    pause_col, _ = st.columns([1, 4])
+    with pause_col:
+        if st.button("⏸️ Pause Generation", type="secondary", use_container_width=True):
+            gen_state["pause_requested"] = True
+            gen_state["stop_requested"]  = True
 
     # ── Overall progress bar placeholder ──────────────────────────────────────
     overall_ph = st.empty()
@@ -637,10 +880,11 @@ def render_generation_ui() -> None:
 
     # ── Chunk 1 live display placeholder ──────────────────────────────────────
     st.markdown(
-        '<div class="section-title">Chunk 1 — Pre-Analysis + Prompts</div>',
+        '<div class="section-title">Chunk 1 — Pre-Analysis (1A) then Prompts (1B) in parallel with Chunks 2+</div>',
         unsafe_allow_html=True,
     )
-    chunk1_ph = st.empty()
+    chunk1_ph    = st.empty()
+    chunk1_ph_ph = st.empty()   # phase label placeholder
 
     # ── Pre-create one placeholder per parallel chunk ─────────────────────────
     # We derive IDs from gen_state["chunks"] (always correct) rather than from
@@ -694,23 +938,32 @@ def render_generation_ui() -> None:
         else:
             analysis_ph.info("⏳ Story analysis queued...")
 
-        # Chunk 1
-        s1  = statuses.get(1, {})
-        st1 = s1.get("status", "queued")
+        # Chunk 1 (split: 1A pre-analysis → 1B prompts in parallel with chunks 2+)
+        s1    = statuses.get(1, {})
+        st1   = s1.get("status", "queued")
+        phase = gen_state.get("chunk1_phase", "")
+
         if st1 == "processing":
             live = gen_state.get("chunk1_live", "")
+            if phase:
+                chunk1_ph_ph.info(f"🔄 {phase}")
             if live:
                 chunk1_ph.code("\n".join(live.split("\n")[-16:]), language=None)
             else:
                 chunk1_ph.info("⏳ Waiting for first tokens…")
+        elif st1 == "retrying":
+            chunk1_ph_ph.warning(s1.get("retry_msg", "⚠️ Retrying…"))
         elif st1 == "done":
+            chunk1_ph_ph.empty()
             chunk1_ph.success(
                 f"✅ Chunk 1 complete — {s1.get('prompts_done', 0)} prompts "
                 f"in {fmt(s1.get('elapsed', 0))}"
             )
         elif st1 == "error":
+            chunk1_ph_ph.empty()
             chunk1_ph.error(f"❌ Chunk 1 failed: {s1.get('error_msg', 'Unknown error')}")
         else:
+            chunk1_ph_ph.empty()
             chunk1_ph.info("⏳ Chunk 1 queued…")
 
         # All parallel chunk cards — pushed to browser simultaneously
@@ -727,6 +980,15 @@ def render_generation_ui() -> None:
                 },
             )
             ph.markdown(_card_html(cid, s), unsafe_allow_html=True)
+
+    # ── Live prompts section (re-renders on every st.rerun() cycle ~2s) ─────────
+    st.divider()
+    _live_prompts  = gen_state.get("all_prompts", [])
+    _live_total    = gen_state.get("total_blocks", 0)
+    _live_mode     = gen_state.get("mode_code", "A")
+    _live_style    = gen_state.get("visual_style", "dark_fantasy")
+    render_live_prompts(_live_prompts, _live_total, _live_mode, _live_style)
+    st.divider()
 
     # ── Inner polling loop ─────────────────────────────────────────────────────
     # 4 × 0.5 s = 2 s of in-place updates, then st.rerun() for button handling.
@@ -850,6 +1112,313 @@ def _retry_generation_thread(gen_state: dict) -> None:
     except Exception as exc:
         retry["error"]  = str(exc)[:300]
         retry["status"] = "error"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RESUME THREAD + PAUSE UI
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _async_resume(
+    gen_state: dict,
+    new_api_keys: list,
+    new_model: str,
+    new_max_parallel: int,
+) -> None:
+    """Async: re-process only pending continuation chunks with (possibly new) settings."""
+    gen_state["api_keys"]     = new_api_keys
+    gen_state["model"]        = new_model
+    gen_state["max_parallel"] = new_max_parallel
+    gen_state["pause_requested"] = False
+    gen_state["stop_requested"]  = False
+    gen_state["errors"]          = []
+
+    _lock    = gen_state.get("_lock")
+    sys_slim = gen_state.get("system_prompt_slim", "")
+    n_keys   = len(new_api_keys)
+
+    # ── Redo Chunk 1B if not done ────────────────────────────────────────────
+    chunk1_status = gen_state.get("chunk_statuses", {}).get(1, {}).get("status", "")
+    if chunk1_status != "done":
+        chunk1b_msg = gen_state.get("chunk1b_message", "")
+        if not chunk1b_msg:
+            gen_state["fatal_error"] = (
+                "Cannot resume Chunk 1 — stored message missing. "
+                "Use 'Start New Generation'."
+            )
+            return
+
+        exp1 = gen_state.get("chunk_statuses", {}).get(1, {}).get("expected", 0)
+        gen_state["chunk_statuses"][1] = {
+            **gen_state.get("chunk_statuses", {}).get(1, {}),
+            "status": "processing", "start_time": time.time(),
+            "prompts_done": 0, "pct": 0, "phase": "1B: Generating Prompts (Resume)",
+        }
+        gen_state["chunk1_phase"] = "1B: Generating Prompts (Resume)"
+        _t1b = [0.0]
+
+        def _on_1b_text(delta, full_text):
+            now = time.time()
+            if now - _t1b[0] < 0.3:
+                return
+            _t1b[0] = now
+            with (_lock if _lock else nullcontext()):
+                gen_state["chunk1_live"] = full_text
+
+        def _on_1b_prog(event, prompts_done, pct, msg):
+            now_pct = min(100, int(prompts_done / exp1 * 100)) if exp1 > 0 else pct
+            with (_lock if _lock else nullcontext()):
+                gen_state["chunk_statuses"][1] = {
+                    **gen_state["chunk_statuses"].get(1, {}),
+                    "prompts_done": prompts_done, "pct": now_pct,
+                }
+
+        def _stop1():
+            return gen_state.get("stop_requested", False)
+
+        r1b = await send_chunk_async_streaming(
+            new_api_keys[0], new_model, sys_slim, chunk1b_msg,
+            on_text=_on_1b_text, on_progress=_on_1b_prog,
+            expected_prompts=exp1, stop_check=_stop1,
+        )
+        if "error" in r1b and not r1b.get("cancelled"):
+            fb = get_fallback_model(new_model)
+            if fb:
+                r1b2 = await send_chunk_async_streaming(
+                    new_api_keys[0], fb, sys_slim, chunk1b_msg,
+                    on_text=_on_1b_text, on_progress=_on_1b_prog,
+                    expected_prompts=exp1, stop_check=_stop1,
+                )
+                if "error" not in r1b2:
+                    r1b = r1b2
+
+        if r1b.get("cancelled") or gen_state.get("stop_requested"):
+            gen_state["is_paused"] = True
+            return
+
+        if "error" not in r1b:
+            _vs      = gen_state.get("visual_style", "dark_fantasy")
+            _is_sh   = _vs not in ("dark_fantasy", "custom", "history_4")
+            c1_proms = extract_all_prompts(r1b["content"])
+            if _is_sh:
+                for _p in c1_proms:
+                    _p["image_prompt"] = process_prompt_with_style(
+                        _p["image_prompt"], _vs, _p["image_prompt"]
+                    )
+            # Merge: remove old chunk-1 blocks, add fresh ones
+            _c1_range = set(range(
+                gen_state["chunks"][0][0].index,
+                gen_state["chunks"][0][-1].index + 1,
+            ))
+            gen_state["all_prompts"] = [
+                p for p in gen_state["all_prompts"] if p["block"] not in _c1_range
+            ]
+            gen_state["all_prompts"].extend(c1_proms)
+            gen_state["last_prompt"] = extract_last_prompt(r1b["content"])
+            elapsed1 = time.time() - gen_state["chunk_statuses"][1]["start_time"]
+            gen_state["chunk_statuses"][1] = {
+                "status": "done", "elapsed": elapsed1,
+                "prompts_done": len(c1_proms), "pct": 100,
+                "model_used": new_model, "was_fallback": False, "key_label": "Key 1",
+            }
+        else:
+            gen_state["chunk_statuses"][1] = {
+                **gen_state["chunk_statuses"].get(1, {}),
+                "status": "error",
+                "error_msg": r1b.get("error", "Failed")[:200],
+            }
+        gen_state["chunk1_live"]  = ""
+        gen_state["chunk1_phase"] = ""
+
+    if gen_state.get("stop_requested"):
+        gen_state["is_paused"] = True
+        return
+
+    # ── Build list of pending continuation chunks ─────────────────────────────
+    stored_messages = gen_state.get("chunk_messages", [])
+    pending = []
+    for cm in stored_messages:
+        cid    = cm["chunk_id"]
+        cstatus = gen_state.get("chunk_statuses", {}).get(cid, {}).get("status", "queued")
+        if cstatus in ("paused", "queued", "error", "cancelled", "stopped"):
+            key_idx  = (cid - 2) % n_keys
+            new_key  = new_api_keys[key_idx]
+            new_lbl  = f"Key {key_idx + 1}"
+            pending.append({**cm, "api_key": new_key, "key_label": new_lbl})
+            gen_state["chunk_statuses"][cid] = {
+                **gen_state["chunk_statuses"].get(cid, {}),
+                "status": "queued", "prompts_done": 0, "pct": 0,
+                "key_label": new_lbl,
+            }
+
+    if not pending:
+        return
+
+    def _on_chunk_upd(chunk_id, event, prompts_done, pct, msg):
+        with (_lock if _lock else nullcontext()):
+            s = dict(gen_state["chunk_statuses"].get(chunk_id, {}))
+            if event == "processing":
+                gen_state["chunk_statuses"][chunk_id] = {
+                    **s, "status": "processing",
+                    "start_time": time.time(), "prompts_done": 0, "pct": 0,
+                    "key_label": msg or s.get("key_label", ""),
+                }
+            elif event == "progress":
+                gen_state["chunk_statuses"][chunk_id] = {
+                    **s, "prompts_done": prompts_done, "pct": pct,
+                }
+            elif event == "retrying":
+                gen_state["chunk_statuses"][chunk_id] = {
+                    **s, "status": "retrying", "retry_msg": msg,
+                }
+            elif event in ("done", "error", "stopped", "paused"):
+                elapsed = (
+                    time.time() - s.get("start_time", time.time())
+                    if s.get("start_time") else 0
+                )
+                gen_state["chunk_statuses"][chunk_id] = {
+                    **s,
+                    "status": "paused" if event == "paused" else event,
+                    "elapsed": elapsed,
+                    "pct": 100 if event == "done" else s.get("pct", 0),
+                    "error_msg": msg if event == "error" else "",
+                }
+
+    results = await process_chunks_queue(
+        api_keys=new_api_keys, model=new_model,
+        system_prompt=sys_slim,
+        chunk_messages=pending,
+        max_parallel=new_max_parallel,
+        on_chunk_update=_on_chunk_upd,
+        gen_state=gen_state,
+    )
+
+    _vs    = gen_state.get("visual_style", "dark_fantasy")
+    _is_sh = _vs not in ("dark_fantasy", "custom", "history_4")
+    for r in results:
+        if r.get("status") == "success" and r.get("content"):
+            _cp = extract_all_prompts(r["content"])
+            if _is_sh:
+                for _p in _cp:
+                    _p["image_prompt"] = process_prompt_with_style(
+                        _p["image_prompt"], _vs, _p["image_prompt"]
+                    )
+            gen_state["all_prompts"].extend(_cp)
+            cid = r.get("chunk_id")
+            if cid:
+                _upd = {}
+                if r.get("was_fallback"):
+                    _upd["model_used"]   = r.get("model_used", new_model)
+                    _upd["was_fallback"] = True
+                if r.get("truncated"):
+                    _upd["truncated"] = True
+                if _upd:
+                    with (_lock if _lock else nullcontext()):
+                        gen_state["chunk_statuses"][cid] = {
+                            **gen_state["chunk_statuses"].get(cid, {}), **_upd
+                        }
+        elif r.get("status") == "error":
+            gen_state["errors"].append(
+                f"Chunk {r['chunk_id']}: {r.get('error', 'Unknown')[:200]}"
+            )
+
+    gen_state["all_prompts"].sort(key=lambda x: x["block"])
+    _by_block = {}
+    for _p in gen_state["all_prompts"]:
+        _by_block[_p["block"]] = _p
+    gen_state["all_prompts"] = sorted(_by_block.values(), key=lambda x: x["block"])
+
+    if gen_state.get("pause_requested"):
+        gen_state["is_paused"] = True
+    else:
+        gen_state["is_paused"] = False
+
+    gen_state["chunk_results"] = results
+    _total = gen_state.get("total_blocks", 0)
+    gen_state["prompt_validation"] = validate_prompt_count(
+        gen_state["all_prompts"], _total
+    )
+
+
+def _resume_generation_thread(
+    gen_state: dict,
+    new_api_keys: list,
+    new_model: str,
+    new_max_parallel: int,
+) -> None:
+    """Background thread: resume generation for pending chunks with new settings."""
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            _async_resume(gen_state, new_api_keys, new_model, new_max_parallel)
+        )
+    except Exception as exc:
+        gen_state["fatal_error"] = str(exc)
+    finally:
+        gen_state["end_time"] = time.time()
+        gen_state["done"]     = True
+        loop.close()
+
+
+def render_paused_ui(api_keys: list, model: str, max_parallel: int) -> None:
+    """Full page shown when generation is paused."""
+    gen_state    = st.session_state.gen_state
+    all_prompts  = gen_state.get("all_prompts", [])
+    total_blocks = gen_state.get("total_blocks", 0)
+    mode_code    = gen_state.get("mode_code", "A")
+    visual_style = gen_state.get("visual_style", "dark_fantasy")
+
+    st.warning("⏸️ Generation Paused")
+
+    # Pause stats
+    statuses = gen_state.get("chunk_statuses", {})
+    done_c   = sum(1 for s in statuses.values() if s.get("status") == "done")
+    error_c  = sum(1 for s in statuses.values() if s.get("status") == "error")
+    pend_c   = sum(1 for s in statuses.values()
+                   if s.get("status") in ("paused", "queued", "cancelled", "stopped"))
+    total_c  = len(statuses)
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1: st.metric("✅ Chunks Done",   f"{done_c}/{total_c}")
+    with m2: st.metric("❌ Failed",         error_c)
+    with m3: st.metric("⏸️ Remaining",     pend_c)
+    with m4: st.metric("📝 Prompts Ready",  len(all_prompts))
+
+    st.info(
+        "💡 **While paused you can:** change or add API keys in the sidebar · "
+        "adjust Parallel Tasks · switch model. "
+        "Then click **▶️ Resume** to continue with the new settings."
+    )
+
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        if st.button("▶️ Resume Generation", type="primary", use_container_width=True):
+            gen_state["pause_requested"] = False
+            gen_state["stop_requested"]  = False
+            gen_state["is_paused"]       = False
+            gen_state["done"]            = False
+            gen_state["start_time"]      = time.time()
+            t = threading.Thread(
+                target=_resume_generation_thread,
+                args=(gen_state, api_keys, model, max_parallel),
+                daemon=True,
+            )
+            t.start()
+            st.session_state.gen_thread    = t
+            st.session_state.is_generating = True
+            st.rerun()
+    with rc2:
+        if st.button("🔄 Start New Generation", use_container_width=True):
+            gen_state["retry"] = None
+            st.session_state.gen_state = None
+            st.rerun()
+
+    # Live prompts section
+    if all_prompts:
+        st.divider()
+        render_live_prompts(all_prompts, total_blocks, mode_code, visual_style)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1629,31 +2198,24 @@ with st.sidebar:
                        ["A — Image Prompts Only", "B — Image + Video Prompts"], index=0)
     mode_code = "A" if mode.startswith("A") else "B"
 
-    chunk_size     = st.slider("Chunk Size (blocks)", 15, 50, 30)
-    gap_threshold  = st.slider("Scene Break Gap (s)", 1.0, 10.0, 3.0, 0.5)
+    chunk_size    = st.slider("Chunk Size (blocks)", 15, 50, 30)
+    gap_threshold = st.slider("Scene Break Gap (s)", 1.0, 10.0, 3.0, 0.5)
 
-    # ── Parallel tasks: slider OR custom number ───────────────────────────────
-    st.markdown("**Parallel Tasks**")
-    par_mode = st.radio("", ["Slider (1–8)", "Custom (1–20)"],
-                        horizontal=True, label_visibility="collapsed")
-    if par_mode == "Slider (1–8)":
-        max_parallel = st.slider("", 1, 8, 3, label_visibility="collapsed")
-    else:
-        max_parallel = int(st.number_input("", min_value=1, max_value=20,
-                                           value=3, step=1, label_visibility="collapsed"))
-    if max_parallel > 3:
-        st.warning("⚠️ Free tier: >3 parallel tasks may trigger 429 rate limits. Recommended: 2–3.")
-
-    # ── Multi-key section ─────────────────────────────────────────────────────
-    with st.expander("🔑 Advanced: Multiple API Keys"):
+    # ── Multi-key section (must come BEFORE parallel slider so key count is known) ─
+    with st.expander("🔑 Multiple API Keys (for speed)", expanded=False):
+        st.caption(
+            "More keys = faster generation. Each free OpenRouter account gives 1 key.\n\n"
+            "⚡ 4 keys = 8 parallel · 8 keys = 16 parallel · 12 keys = 24 parallel"
+        )
         api_keys_text = st.text_area(
             "Paste API keys (one per line)",
-            height=100,
-            placeholder="sk-or-key-1...\nsk-or-key-2...\nsk-or-key-3...",
-            help="Add multiple OpenRouter API keys for faster generation. Each key gets its own rate limit quota.",
+            height=150,
+            placeholder="sk-or-v1-key1...\nsk-or-v1-key2...\nsk-or-v1-key3...\n(add up to 20 keys)",
+            help="Each key gets max 2 concurrent requests to avoid rate limits.",
             key="multi_api_keys_text",
         )
-        raw_keys = [k.strip() for k in api_keys_text.split("\n") if k.strip()]
+        raw_keys = [k.strip() for k in api_keys_text.split("\n")
+                    if k.strip().startswith("sk-")]
         if raw_keys:
             api_keys = raw_keys  # override single-key with multi-key list
             _val_cache = f"key_val_{hash(tuple(raw_keys))}"
@@ -1670,14 +2232,30 @@ with st.sidebar:
                 if _vk:
                     st.success(f"✅ {len(_vk)}/{len(raw_keys)} keys passed validation")
                     api_keys = _vk  # drop invalid keys
+            _eff_par = len(api_keys) * 2
+            st.success(f"🔑 {len(api_keys)} keys · ⚡ {_eff_par} effective parallel capacity")
 
-    if len(api_keys) > 1:
+    # ── Parallel tasks: auto-adjust max based on key count ───────────────────
+    _rec_parallel  = min(len(api_keys) * 2, 20) if api_keys else 3
+    _max_slider    = min(len(api_keys) * 2, 20) if len(api_keys) > 1 else 8
+    st.markdown("**Parallel Tasks**")
+    max_parallel = st.slider(
+        "",
+        min_value=1,
+        max_value=_max_slider,
+        value=min(_rec_parallel, _max_slider),
+        label_visibility="collapsed",
+        help=f"Recommended: {_rec_parallel} ({len(api_keys)} key(s) × 2)",
+    )
+    if len(api_keys) <= 1 and max_parallel > 3:
+        st.caption("⚠️ With 1 key, >3 parallel may cause 429 rate limits. Add more keys above.")
+    elif len(api_keys) > 1:
         _eff = max(1, max_parallel // len(api_keys)) * len(api_keys)
-        st.info(
-            f"🔑 Active keys: {len(api_keys)} | "
-            f"Effective parallel capacity: {_eff} "
-            f"({max(1, max_parallel // len(api_keys))} per key)"
-        )
+        st.caption(f"🔑 {len(api_keys)} keys · {max(1, max_parallel // len(api_keys))} tasks/key · {_eff} effective capacity")
+
+    # Store current sidebar values so resume can pick them up after pause
+    st.session_state.current_api_keys     = api_keys
+    st.session_state.current_max_parallel = max_parallel
 
     # ── Chunking mode ─────────────────────────────────────────────────────────
     st.markdown("**Chunking Method**")
@@ -1711,6 +2289,19 @@ if st.session_state.get("nav_page") == "📖 How to Use":
 # ─────────────────────────────────────────────────────────────────────────────
 if st.session_state.is_generating:
     render_generation_ui()
+    st.stop()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PAUSED STATE — show pause/resume UI
+# ─────────────────────────────────────────────────────────────────────────────
+if (st.session_state.gen_state and
+        st.session_state.gen_state.get("is_paused") and
+        not st.session_state.is_generating):
+    render_paused_ui(
+        api_keys     = st.session_state.get("current_api_keys", []),
+        model        = st.session_state.get("selected_model", "stepfun/step-3.5-flash:free"),
+        max_parallel = st.session_state.get("current_max_parallel", 3),
+    )
     st.stop()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1813,7 +2404,8 @@ if smart_info:
     st.success(smart_info)
 
 # ── Stats row ─────────────────────────────────────────────────────────────────
-est_sec = calc_est(chunks, max_parallel, model)
+est_sec    = calc_est(chunks, max_parallel, model)
+_opt_chunk = calculate_optimal_chunk_size(len(blocks), len(api_keys), max_parallel)
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 with c1: st.metric("📦 Total Blocks", len(blocks))
 with c2: st.metric("🔢 Chunks",        len(chunks))
@@ -1821,6 +2413,11 @@ with c3: st.metric("📏 Avg Chunk",     len(blocks) // max(len(chunks), 1))
 with c4: st.metric("⏱️ Est. Time",    f"~{fmt(est_sec)}")
 with c5: st.metric("🚀 Parallel",      max_parallel)
 with c6: st.metric("🤖 Model",         MODEL_DISPLAY.get(model, model.split("/")[-1]))
+if _opt_chunk != chunk_size:
+    st.caption(
+        f"💡 Speed tip: Recommended chunk size for your setup is **{_opt_chunk}** "
+        f"(currently {chunk_size}). Adjust in sidebar → Chunk Size."
+    )
 
 # ── Chunk preview ─────────────────────────────────────────────────────────────
 with st.expander("📋 Chunk Preview", expanded=False):
