@@ -27,6 +27,42 @@ MODEL_DISPLAY_NAMES = {
 }
 
 
+def clean_encoding(text: str) -> str:
+    """Fix common UTF-8 mojibake in LLM API responses.
+
+    Applied immediately after streaming completes so downstream code
+    (extraction regex, export) always receives clean Unicode.
+    """
+    if not text:
+        return text
+    replacements = {
+        # Em / en dashes
+        'â\x80\x93': '–', 'â\x80\x94': '—',
+        'â€"': '—', 'â€"': '–',
+        'â\x96\xa1': '—', 'â□□': '—',
+        # Smart quotes
+        'â\x80\x99': '\u2019', 'â\x80\x98': '\u2018',
+        'â€™': '\u2019', 'â€˜': '\u2018',
+        'â\x80\x9c': '\u201c', 'â\x80\x9d': '\u201d',
+        'â€œ': '\u201c', 'â€\x9d': '\u201d',
+        # Turkish
+        'Ã¶': 'ö', 'Ãœ': 'Ü', 'Ã¼': 'ü', 'Ã–': 'Ö',
+        'Ã§': 'ç', 'Ã‡': 'Ç', 'ÅŸ': 'ş', 'Åž': 'Ş',
+        'ÄŸ': 'ğ', 'Äž': 'Ğ', 'Ä±': 'ı', 'Ä°': 'İ',
+        # Latin / Hungarian
+        'Ã¡': 'á', 'Ã': 'Á', 'Ã©': 'é', 'Ã‰': 'É',
+        'Ã­': 'í', 'Ã³': 'ó', 'Ã"': 'Ó', 'Ã±': 'ñ',
+        'Ã¤': 'ä', 'Ã¸': 'ø', 'Ã¥': 'å',
+        # Punctuation
+        'Â¿': '¿', 'Â¡': '¡', 'Â·': '·',
+    }
+    for bad, good in replacements.items():
+        text = text.replace(bad, good)
+    # Catch-all: â + two continuation bytes
+    text = re.sub(r'â[\x80-\xbf][\x80-\xbf]', '—', text)
+    return text
+
+
 def get_fallback_model(primary: str) -> str | None:
     """Return the next model in the fallback order, or None if no fallback exists."""
     for i, m in enumerate(MODEL_FALLBACK_ORDER):
@@ -113,7 +149,7 @@ def send_chunk_sync_streaming(
             except (json.JSONDecodeError, KeyError, IndexError):
                 pass
 
-    return full_text
+    return clean_encoding(full_text)
 
 
 def send_chunk_sync_streaming_with_fallback(
@@ -232,6 +268,7 @@ async def send_chunk_async_streaming(
                         return {"error": f"API Error {resp.status}: {err[:300]}"}
 
                     # ── Stream tokens ────────────────────────────────────────
+                    _truncated = False
                     async for raw_line in resp.content:
                         if stop_check and stop_check():
                             return {"error": "Stopped by user.", "cancelled": True}
@@ -245,7 +282,11 @@ async def send_chunk_async_streaming(
 
                         try:
                             data = json.loads(data_str)
-                            delta = data["choices"][0]["delta"].get("content", "")
+                            choice = data["choices"][0]
+                            # Detect truncation due to token limit
+                            if choice.get("finish_reason") == "length":
+                                _truncated = True
+                            delta = choice["delta"].get("content", "")
                             if delta:
                                 full_text  += delta
                                 chars_rx   += len(delta)
@@ -290,7 +331,7 @@ async def send_chunk_async_streaming(
                         except (json.JSONDecodeError, KeyError, IndexError):
                             pass
 
-                    return {"content": full_text}
+                    return {"content": clean_encoding(full_text), "truncated": _truncated}
 
         except asyncio.CancelledError:
             return {"error": "Cancelled.", "cancelled": True}

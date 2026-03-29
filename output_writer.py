@@ -173,20 +173,46 @@ def clean_prompt_text(text: str) -> str:
     # Remove duplicate style blocks
     text = remove_duplicate_style(text)
 
-    # Fix mojibake characters that may slip through from API responses
+    # ── Full mojibake fix (em dashes, smart quotes, Turkish/Hungarian) ────────
     mojibake_map = {
-        'â\x80\x93': '–',   # en dash
-        'â\x80\x94': '—',   # em dash
-        'â\x80\x99': '\u2019',  # right single quote
-        'â\x80\x9c': '\u201c',  # left double quote
-        'â\x80\x9d': '\u201d',  # right double quote
-        'â\x96\xa1': '—',   # □ box → em dash
-        'â□□': '—',
-        'Ã³': 'ó', 'Ã¡': 'á', 'Ã©': 'é', 'Ã±': 'ñ',
-        'Â¿': '¿', 'Â¡': '¡', 'Ã ': 'à',
+        # Em / en dashes (most common artifact)
+        'â\x80\x93': '–',      # en dash
+        'â\x80\x94': '—',      # em dash
+        'â€"': '—',             # em dash variant (double-encoded)
+        'â€"': '–',             # en dash variant (double-encoded)
+        'â\x96\xa1': '—',      # □ box char → em dash
+        'â□□': '—',             # visible box form
+        # Smart quotes
+        'â\x80\x99': '\u2019', # right single quote  '
+        'â\x80\x98': '\u2018', # left single quote   '
+        'â€™': '\u2019',       # right single quote variant
+        'â€˜': '\u2018',       # left single quote variant
+        'â\x80\x9c': '\u201c', # left double quote   "
+        'â\x80\x9d': '\u201d', # right double quote  "
+        'â€œ': '\u201c',       # left double quote variant
+        'â€\x9d': '\u201d',    # right double quote variant
+        # Turkish characters
+        'Ã¶': 'ö', 'Ãœ': 'Ü', 'Ã¼': 'ü', 'Ã–': 'Ö',
+        'Ã§': 'ç', 'Ã‡': 'Ç', 'ÅŸ': 'ş', 'Åž': 'Ş',
+        'ÄŸ': 'ğ', 'Äž': 'Ğ', 'Ä±': 'ı', 'Ä°': 'İ',
+        # Latin / Hungarian characters
+        'Ã¡': 'á', 'Ã': 'Á', 'Ã©': 'é', 'Ã‰': 'É',
+        'Ã­': 'í', 'Ã': 'Í', 'Ã³': 'ó', 'Ã"': 'Ó',
+        'Ã±': 'ñ', 'Ã¤': 'ä', 'Ã¸': 'ø', 'Ã¥': 'å',
+        'Å'': 'ő', 'Å"': 'Ő', 'Å±': 'ű', 'Å°': 'Ű',
+        # Common punctuation
+        'Â¿': '¿', 'Â¡': '¡', 'Ã ': 'à', 'Â·': '·',
+        # Common proper-name mojibake (history content)
+        'GÃ¶bekli': 'Göbekli', 'GÃ¶beklitepe': 'Göbeklitepe',
+        'MohÃ¡cs': 'Mohács', 'SÃ¼leyman': 'Süleyman',
+        'ZÃ¡polya': 'Zápolya', 'BÃ¡thory': 'Báthory',
+        'JÃ¡nos': 'János',
     }
     for bad, good in mojibake_map.items():
         text = text.replace(bad, good)
+    # Catch-all: â followed by two continuation bytes = broken UTF-8 sequence
+    text = re.sub(r'â[\x80-\xbf][\x80-\xbf]', '—', text)
+    text = re.sub(r'â□+', '—', text)
 
     # Clean up leading/trailing whitespace
     return text.strip()

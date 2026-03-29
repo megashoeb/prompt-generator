@@ -545,16 +545,19 @@ async def _async_generation(gen_state: dict) -> None:
                         _p["image_prompt"], visual_style, _p["image_prompt"]
                     )
             gen_state["all_prompts"].extend(_cont_prompts)
-            # Propagate fallback info into chunk_statuses for card rendering
+            # Propagate fallback + truncation info into chunk_statuses for card rendering
             cid = r.get("chunk_id")
-            if cid and r.get("was_fallback"):
-                with (_lock if _lock else nullcontext()):
-                    existing = gen_state["chunk_statuses"].get(cid, {})
-                    gen_state["chunk_statuses"][cid] = {
-                        **existing,
-                        "model_used":  r.get("model_used", model),
-                        "was_fallback": True,
-                    }
+            if cid:
+                updates = {}
+                if r.get("was_fallback"):
+                    updates["model_used"]   = r.get("model_used", model)
+                    updates["was_fallback"] = True
+                if r.get("truncated"):
+                    updates["truncated"] = True
+                if updates:
+                    with (_lock if _lock else nullcontext()):
+                        existing = gen_state["chunk_statuses"].get(cid, {})
+                        gen_state["chunk_statuses"][cid] = {**existing, **updates}
         elif r.get("status") in ("error",):
             gen_state["errors"].append(
                 f"Chunk {r['chunk_id']}: {r.get('error', 'Unknown')[:200]}"
@@ -874,7 +877,8 @@ def render_results_ui() -> None:
         st.rerun()
         return
 
-    # B) Retry just finished → merge results, stash banner, clear retry state
+    # B) Retry just finished → merge results, stash banner, clear retry state,
+    #    invalidate cached validation, then rerun so stats re-render fresh.
     _retry_banner: tuple | None = None
     if retry and retry.get("status") in ("done", "error"):
         if retry.get("status") == "done":
@@ -890,24 +894,33 @@ def render_results_ui() -> None:
                 total_retried = len(retry.get("missing_blocks", []))
                 still_missing = total_retried - recovered
                 if still_missing <= 0:
-                    _retry_banner = (
+                    banner = (
                         "success",
                         f"✅ Retry complete! Recovered all {recovered} missing prompts.",
                     )
+                    # Clear chunk errors — retry resolved the issues
+                    gen_state["errors"] = []
                 else:
-                    _retry_banner = (
+                    banner = (
                         "warning",
                         f"⚠️ Recovered {recovered}/{total_retried} prompts. "
                         f"{still_missing} still missing — you can retry again.",
                     )
             else:
-                _retry_banner = (
+                banner = (
                     "warning",
                     "⚠️ Retry returned no parseable prompts. Try again.",
                 )
         else:
-            _retry_banner = ("error", f"❌ Retry failed: {retry.get('error', 'Unknown error')}")
-        gen_state["retry"] = None   # clear after handling
+            banner = ("error", f"❌ Retry failed: {retry.get('error', 'Unknown error')}")
+
+        gen_state["retry"]             = None   # clear after handling
+        gen_state["prompt_validation"] = None   # force fresh recomputation
+        gen_state["_retry_banner"]     = banner # persist banner across rerun
+        st.rerun()                              # full refresh with updated data
+
+    # Restore banner persisted from the rerun above (if any)
+    _retry_banner = gen_state.pop("_retry_banner", None)
 
     # ── Normal results ────────────────────────────────────────────────────────
     all_prompts  = gen_state.get("all_prompts", [])
@@ -1061,7 +1074,9 @@ def render_results_ui() -> None:
             )
 
     # ── Count validation stats ────────────────────────────────────────────────
-    _validation = gen_state.get("prompt_validation") or validate_prompt_count(all_prompts, total_blocks)
+    # Always recompute — cached value may be stale after a retry merge.
+    _validation = validate_prompt_count(all_prompts, total_blocks)
+    gen_state["prompt_validation"] = _validation   # refresh cache
     _missing_list = _validation["missing"]
     _extra_list   = _validation["extra"]
 
@@ -1132,11 +1147,25 @@ def render_results_ui() -> None:
                     st.session_state.gen_state = None
                     st.rerun()
 
-    # Errors
+    # Errors (only shown when there are unresolved failures)
     if gen_state.get("errors"):
         with st.expander(f"❌ Errors ({len(gen_state['errors'])} chunks)", expanded=True):
             for e in gen_state["errors"]:
                 st.error(e)
+
+    # Truncation warning — fired when finish_reason == "length" on any chunk
+    _truncated_chunks = [
+        r for r in gen_state.get("chunk_results", [])
+        if r and r.get("truncated")
+    ]
+    if gen_state.get("chunk_statuses", {}).get(1, {}).get("truncated"):
+        _truncated_chunks = [{"chunk_id": 1}] + _truncated_chunks
+    if _truncated_chunks:
+        st.warning(
+            f"⚠️ **{len(_truncated_chunks)} chunk(s) were truncated** — the LLM hit the "
+            f"max token limit mid-response. The last prompt in each affected chunk may "
+            f"be incomplete. **Fix:** reduce Chunk Size in the sidebar (try 20–25) and regenerate."
+        )
 
     if gen_state.get("stop_requested"):
         st.info("⏹️ Generation was stopped early. Partial results shown above.")
