@@ -173,6 +173,21 @@ def clean_prompt_text(text: str) -> str:
     # Remove duplicate style blocks
     text = remove_duplicate_style(text)
 
+    # Fix mojibake characters that may slip through from API responses
+    mojibake_map = {
+        'â\x80\x93': '–',   # en dash
+        'â\x80\x94': '—',   # em dash
+        'â\x80\x99': '\u2019',  # right single quote
+        'â\x80\x9c': '\u201c',  # left double quote
+        'â\x80\x9d': '\u201d',  # right double quote
+        'â\x96\xa1': '—',   # □ box → em dash
+        'â□□': '—',
+        'Ã³': 'ó', 'Ã¡': 'á', 'Ã©': 'é', 'Ã±': 'ñ',
+        'Â¿': '¿', 'Â¡': '¡', 'Ã ': 'à',
+    }
+    for bad, good in mojibake_map.items():
+        text = text.replace(bad, good)
+
     # Clean up leading/trailing whitespace
     return text.strip()
 

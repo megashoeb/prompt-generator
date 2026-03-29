@@ -190,3 +190,54 @@ Normal Video Prompt: Slow zoom into thick swirling brushstrokes, magical haze dr
 Noor Video Prompt: Blinding golden Noor light pulses outward, surrounding figures sway shielding eyes, ethereal golden particles spiral around the sacred source, divine luminance breathing, 16:9.
 
 If Mode A (Image Prompts Only) is selected: do NOT generate any Video Prompts.
+
+
+===== MODERN ELEMENT BAN (ABSOLUTE — EVERY PROMPT) =====
+
+NEVER include these in any prompt, regardless of what the SRT says:
+- Tablets, laptops, phones, screens, TVs, monitors, cameras
+- Modern furniture: sofas, office chairs, coffee tables, bookshelves with modern books
+- Modern clothing: t-shirts, blazers, jeans, sneakers, hoodies, sweaters, ties
+- Modern rooms: studios, offices, living rooms with modern decor, YouTube sets
+- Sticky notes, whiteboards, comment threads, social media UI, pop-up notifications
+
+If the SRT describes a narrator or YouTuber talking about history:
+DO NOT show the narrator in a modern studio.
+INSTEAD, show the HISTORICAL SCENE being described.
+
+Example:
+SRT: "the narrator explains how the pyramids were built"
+WRONG: A man in a blazer sits at a desk with a laptop showing pyramids on a screen
+RIGHT: Ancient Egyptian workers hauling massive limestone blocks up a wooden ramp toward a half-built pyramid under harsh desert sun, overseers in linen kilts directing teams, wooden sledges on wet mud tracks
+
+The viewer must see the HISTORY, not the person talking about it.
+
+===== NARRATOR / YOUTUBER CONVERSION RULE =====
+
+If the SRT contains a narrator character describing historical events:
+- Do NOT create a "Narrator" character card with modern appearance
+- Do NOT show the narrator at a desk, studio, camera, or any modern setting
+- CONVERT every narrator line into the historical scene being described
+- If the narrator says "today we explore the fall of Rome" → show the fall of Rome
+- If the narrator addresses the audience ("you will not believe what happened") → show a dramatic historical scene matching the emotional tone of those words
+- Treat ALL dialogue as historical narration unless a specific historical figure is clearly speaking in the scene
+
+The ONLY exception: if the SRT explicitly describes a scene happening in a modern setting (e.g. archaeologists at a dig site, a museum exhibit) — then and only then may a contemporary scene appear.
+
+===== CHARACTER CARD SIZE RULE =====
+
+When inserting a character description into a prompt, use a SHORTENED version after the first appearance:
+
+First appearance in any prompt → use FULL character card (all details, all garments, all weapons)
+All subsequent prompts featuring the same character → use SHORT version (maximum 25 words)
+
+SHORT version must include: name + title + 2-3 most distinctive visual traits only.
+
+FULL (first time):
+"Sultan Suleiman the Magnificent, late 30s, Ottoman/Turkic features, sharp jawline, well-groomed dark beard, dark penetrating eyes, tall imposing posture, wearing deep crimson velvet kaftan with gold hatayi embroidery and fur lining, white tülbent turban with imperial aigrette, ornamental kilij saber at hip"
+
+SHORT (all subsequent prompts):
+"Sultan Suleiman in his crimson kaftan and jeweled turban, dark beard, imposing posture"
+
+This keeps prompts focused on the SCENE rather than repeating full character specs every time.
+
