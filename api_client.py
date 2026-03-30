@@ -17,12 +17,21 @@ API_URL = "https://openrouter.ai/api/v1/chat/completions"
 # ─────────────────────────────────────────────────────────────────────────────
 
 MODEL_FALLBACK_ORDER = [
+    "minimax/minimax-m2.5:free",
     "stepfun/step-3.5-flash:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
 ]
 
+# Chain: each model falls back to the next; last wraps to first
+MODEL_FALLBACK_CHAIN = {
+    "minimax/minimax-m2.5:free":              "stepfun/step-3.5-flash:free",
+    "stepfun/step-3.5-flash:free":            "nvidia/nemotron-3-super-120b-a12b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free": "minimax/minimax-m2.5:free",
+}
+
 MODEL_DISPLAY_NAMES = {
-    "stepfun/step-3.5-flash:free":           "Step 3.5 Flash",
+    "minimax/minimax-m2.5:free":              "MiniMax M2.5",
+    "stepfun/step-3.5-flash:free":            "Step 3.5 Flash",
     "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super",
 }
 
@@ -66,15 +75,8 @@ def clean_encoding(text: str) -> str:
 
 
 def get_fallback_model(primary: str) -> str | None:
-    """Return the next model in the fallback order, or None if no fallback exists."""
-    for i, m in enumerate(MODEL_FALLBACK_ORDER):
-        if m == primary and i + 1 < len(MODEL_FALLBACK_ORDER):
-            return MODEL_FALLBACK_ORDER[i + 1]
-    # If primary not in list, return the first entry that isn't primary
-    for m in MODEL_FALLBACK_ORDER:
-        if m != primary:
-            return m
-    return None
+    """Return the fallback model for primary using MODEL_FALLBACK_CHAIN."""
+    return MODEL_FALLBACK_CHAIN.get(primary, "stepfun/step-3.5-flash:free")
 
 
 def create_slim_system_prompt(full_prompt: str) -> str:

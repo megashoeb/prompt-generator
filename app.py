@@ -80,12 +80,14 @@ def fmt(seconds: float) -> str:
 
 
 MODEL_SPEEDS = {
-    "stepfun/step-3.5-flash:free":           45,   # avg 38-52 tok/s
+    "minimax/minimax-m2.5:free":              52,   # avg ~52 tok/s
+    "stepfun/step-3.5-flash:free":            45,   # avg 38-52 tok/s
     "nvidia/nemotron-3-super-120b-a12b:free": 22,   # avg 20-25 tok/s
 }
 
 MODEL_DISPLAY = {
-    "stepfun/step-3.5-flash:free":           "Step 3.5 Flash",
+    "minimax/minimax-m2.5:free":              "MiniMax M2.5",
+    "stepfun/step-3.5-flash:free":            "Step 3.5 Flash",
     "nvidia/nemotron-3-super-120b-a12b:free": "Nemotron 3 Super",
 }
 
@@ -1849,7 +1851,7 @@ def render_how_to_use() -> None:
 
 6. 🔒 Paste it into the **"OpenRouter API Key"** field in the left sidebar
 
-> ✅ The free tier includes access to **Step 3.5 Flash** (the default model used by this tool).
+> ✅ The free tier includes access to **MiniMax M2.5** (the default model used by this tool).
 > No payment required for basic usage.
 """)
 
@@ -2050,9 +2052,13 @@ After generation, if counts don't match:
 
     with st.expander("What AI models are supported?", expanded=False):
         st.markdown("""
-Currently the tool uses **Step 3.5 Flash** (by Stepfun) via OpenRouter — it's free, fast, and produces high-quality prompts.
+Three free models are available via the sidebar model selector:
 
-Other models can be added — the model selector in the sidebar will be expanded in future updates.
+- 🏆 **MiniMax M2.5** (default) — 52 tps, 71.6% instruction following, 196K output limit
+- ⚡ **Step 3.5 Flash** — fastest option, great for daily use
+- 🎯 **Nemotron 3 Super** — most accurate for large SRTs (500+ blocks)
+
+All models are free via OpenRouter. No payment required.
 """)
 
     with st.expander("Can I use this for non-mythology content?", expanded=False):
@@ -2134,20 +2140,24 @@ with st.sidebar:
     model = st.selectbox(
         "Choose AI model",
         options=[
+            "minimax/minimax-m2.5:free",
             "stepfun/step-3.5-flash:free",
             "nvidia/nemotron-3-super-120b-a12b:free",
         ],
         format_func=lambda x: {
-            "stepfun/step-3.5-flash:free":           "⚡ Step 3.5 Flash — Fast (default)",
+            "minimax/minimax-m2.5:free":              "🏆 MiniMax M2.5 — Best Overall (NEW)",
+            "stepfun/step-3.5-flash:free":            "⚡ Step 3.5 Flash — Fast",
             "nvidia/nemotron-3-super-120b-a12b:free": "🎯 Nemotron 3 Super — Accurate",
         }[x],
         index=0,
-        help="Step 3.5 Flash = 2× faster. Nemotron = better count accuracy & long context.",
+        help="MiniMax M2.5: 52 tps, 71.6% instruction following, 196K output. "
+             "Step 3.5 Flash: fastest. Nemotron: best for large SRTs (500+ blocks).",
         label_visibility="collapsed",
     )
     _model_tips = {
-        "stepfun/step-3.5-flash:free":           "⚡ ~45 tok/s · Best for: quick generation, daily use",
-        "nvidia/nemotron-3-super-120b-a12b:free": "🎯 ~22 tok/s · Best for: accurate count, large SRTs (500+ blocks)",
+        "minimax/minimax-m2.5:free":              "🏆 ~52 tok/s · 71.6% instruction following · 196K output · Best for: all-round use",
+        "stepfun/step-3.5-flash:free":            "⚡ ~45 tok/s · 64.6% instruction following · Best for: speed, daily use",
+        "nvidia/nemotron-3-super-120b-a12b:free": "🎯 ~22 tok/s · 71.5% instruction following · Best for: large SRTs (500+ blocks)",
     }
     st.caption(_model_tips[model])
     st.session_state.selected_model = model
@@ -2274,7 +2284,7 @@ with st.sidebar:
 # HEADER
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("<h1>🎬 Prompt Generator <span style='color:#ff4b4b;'>by MegaShoeb</span></h1>", unsafe_allow_html=True)
-st.caption("SRT → AI Image Prompts  |  Powered by Step 3.5 Flash")
+st.caption("SRT → AI Image Prompts  |  Powered by MiniMax M2.5")
 st.divider()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2299,7 +2309,7 @@ if (st.session_state.gen_state and
         not st.session_state.is_generating):
     render_paused_ui(
         api_keys     = st.session_state.get("current_api_keys", []),
-        model        = st.session_state.get("selected_model", "stepfun/step-3.5-flash:free"),
+        model        = st.session_state.get("selected_model", "minimax/minimax-m2.5:free"),
         max_parallel = st.session_state.get("current_max_parallel", 3),
     )
     st.stop()
