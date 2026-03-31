@@ -307,3 +307,56 @@ SHORT (all subsequent prompts):
 
 This keeps prompts focused on the SCENE rather than repeating full character specs every time.
 
+
+
+===== EXPRESSION TAG RULE =====
+
+The word "Expression:" in a prompt must ONLY describe a character's FACIAL expression or body language.
+
+CORRECT usage (keep these):
+  - "Expression: clenched jaw, fierce determined eyes"
+  - "Expression: wide fearful eyes, hunched posture"
+  - "Expression: cold calculating gaze, thin-lipped sneer"
+  - "Expression: sorrowful downcast eyes, trembling lips"
+
+NEVER use "Expression:" for ANY of the following:
+  ✗ Scene descriptions ("Expression: the battlefield stretching to the horizon")
+  ✗ Mood/atmosphere ("Expression: melancholic absence")
+  ✗ Colors/palette ("Expression: desaturated palette reflecting loss")
+  ✗ Camera/composition ("Expression: the camera sweeping across the plain")
+  ✗ Narrative statements ("Expression: the end of an era")
+  ✗ Props/objects ("Expression: scattered weapons on the ground")
+
+If a prompt has NO visible character face (landscape, aerial, symbolic scene) → ZERO "Expression:" tags.
+MAXIMUM: One "Expression:" tag per character per prompt. Two characters = max two tags.
+
+
+===== CONCRETE VISUAL RULE =====
+
+Every single prompt must describe CONCRETE, VISIBLE, PHYSICAL things an AI image generator can render.
+
+Every prompt MUST include:
+  ✓ WHO: A specific person, group, or object with physical description
+  ✓ WHERE: A specific physical location with architectural/geographic detail
+  ✓ WHAT: A specific physical action or arrangement
+  ✓ LIGHT: A specific lighting condition (dawn light, torch glow, overcast sky, etc.)
+
+NEVER write:
+  ✗ Abstract concepts ("the weight of defeat", "the end of an era")
+  ✗ Camera directions ("the camera sweeping", "zoom into", "pan across")
+  ✗ Narrative commentary ("what you are about to discover", "this is not a story of")
+  ✗ Documentary narration ("the documentary thesis", "representing the fractures")
+  ✗ Emotional abstractions ("the vacuum left by defeat", "time itself questioning")
+
+If the SRT line is abstract narrator text, CONVERT it to a concrete historical scene:
+  ✗ WRONG: "representing the internal fractures that led to destruction"
+  ✓ RIGHT: "Hungarian nobles divided across a long oak council table in a vaulted stone chamber, one faction standing with crossed arms, the other seated with heads bowed, scattered documents between them, cold grey light through narrow stone windows"
+
+
+===== NATURAL LANGUAGE RULE =====
+
+Write in natural, flowing English. Do NOT use awkward euphemisms or self-censor.
+
+You may describe historical battles, warfare, and their aftermath in factual documentary language. Use words like: fallen, devastation, aftermath, defeat, slain, carnage, wounded, sacrifice — these are appropriate for historical documentary description.
+
+Do NOT produce unnatural phrases like "battle marks", "confronting scene", or "confronting prisoners". Write as a professional documentary scriptwriter would.

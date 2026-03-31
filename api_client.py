@@ -37,40 +37,54 @@ MODEL_DISPLAY_NAMES = {
 
 
 def clean_encoding(text: str) -> str:
-    """Fix common UTF-8 mojibake in LLM API responses.
+    """Fix UTF-8 mojibake in LLM API responses using re-encoding trick.
 
     Applied immediately after streaming completes so downstream code
     (extraction regex, export) always receives clean Unicode.
+
+    Strategy:
+      1. Per-sequence regex: find Ã/Å/Ä/â + continuation chars, re-encode
+         as Latin-1 bytes and decode as UTF-8 — catches ALL variants at once.
+      2. Manual fallback for Windows-1252 mojibake (€ ≠ valid Latin-1 char).
+      3. Bare-â catch-all for dropped continuation bytes.
     """
     if not text:
         return text
-    replacements = {
-        # Em / en dashes
-        'â\x80\x93': '–', 'â\x80\x94': '—',
-        'â€"': '—', 'â€"': '–',
-        'â\x96\xa1': '—', 'â□□': '—',
-        # Smart quotes
-        'â\x80\x99': '\u2019', 'â\x80\x98': '\u2018',
-        'â€™': '\u2019', 'â€˜': '\u2018',
-        'â\x80\x9c': '\u201c', 'â\x80\x9d': '\u201d',
-        'â€œ': '\u201c', 'â€\x9d': '\u201d',
-        # Turkish
-        'Ã¶': 'ö', 'Ãœ': 'Ü', 'Ã¼': 'ü', 'Ã–': 'Ö',
-        'Ã§': 'ç', 'Ã‡': 'Ç', 'ÅŸ': 'ş', 'Åž': 'Ş',
-        'ÄŸ': 'ğ', 'Äž': 'Ğ', 'Ä±': 'ı', 'Ä°': 'İ',
-        # Latin / Hungarian
-        'Ã¡': 'á', 'Ã': 'Á', 'Ã©': 'é', 'Ã‰': 'É',
-        'Ã­': 'í', 'Ã³': 'ó', 'Ã"': 'Ó', 'Ã±': 'ñ',
-        'Ã¤': 'ä', 'Ã¸': 'ø', 'Ã¥': 'å',
-        # Punctuation
-        'Â¿': '¿', 'Â¡': '¡', 'Â·': '·',
-    }
-    for bad, good in replacements.items():
+
+    def _fix_seq(m):
+        """Re-encode a mojibake sequence via Latin-1 → UTF-8."""
+        s = m.group(0)
+        try:
+            return s.encode('latin-1').decode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return s
+
+    # ── Layer 1: Ã + continuation byte (Latin-1 Supplement: à–ÿ, À–¿, etc.) ──
+    # Covers: á é í ó ú ñ ü ö ç Á É Í Ó Ú Ñ Ü Ö Ç ä ë ï â ê î ô û ã õ å ø ý þ
+    text = re.sub(r'Ã[\x80-\xbf]', _fix_seq, text)
+
+    # ── Layer 2: Å + continuation byte (Latin Extended-A: ő ű ş Ş ğ Ğ ı etc.) ─
+    text = re.sub(r'Å[\x80-\xbf]', _fix_seq, text)
+
+    # ── Layer 3: Ä + continuation byte (Latin Extended-A: ā–ŀ, ı İ ğ Ğ etc.) ──
+    text = re.sub(r'Ä[\x80-\xbf]', _fix_seq, text)
+
+    # ── Layer 4: â + TWO continuation bytes (ISO-8859-1 variant) ──────────────
+    # Covers: em-dash (â\x80\x94→—), en-dash, smart quotes, ellipsis, bullet
+    text = re.sub(r'â[\x80-\xbf][\x80-\xbf]', _fix_seq, text)
+
+    # ── Layer 5: Windows-1252 variants (0x80=€, 0x94=" — not valid Latin-1) ──
+    for bad, good in [
+        ('â€"', '—'), ('â€"', '–'),
+        ('â€™', '\u2019'), ('â€˜', '\u2018'),
+        ('â€œ', '\u201c'), ('â€\x9d', '\u201d'),
+        ('â€¦', '…'), ('â€¢', '•'), ('â□□', '—'),
+    ]:
         text = text.replace(bad, good)
-    # Catch-all: â + two continuation bytes
-    text = re.sub(r'â[\x80-\xbf][\x80-\xbf]', '—', text)
-    # Bare â with no continuation bytes (e.g. "hyper-detailed" → "hyperâdetailed")
+
+    # ── Layer 6: Bare â — continuation bytes were silently dropped ─────────────
     text = text.replace('â', '-')
+
     return text
 
 

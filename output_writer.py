@@ -173,52 +173,114 @@ def clean_prompt_text(text: str) -> str:
     # Remove duplicate style blocks
     text = remove_duplicate_style(text)
 
-    # ── Full mojibake fix (em dashes, smart quotes, Turkish/Hungarian) ────────
-    mojibake_map = {
-        # Em / en dashes (most common artifact)
-        'â\x80\x93': '–',      # en dash
-        'â\x80\x94': '—',      # em dash
-        'â€"': '—',             # em dash variant (double-encoded)
-        'â€"': '–',             # en dash variant (double-encoded)
-        'â\x96\xa1': '—',      # □ box char → em dash
-        'â□□': '—',             # visible box form
-        # Smart quotes
-        'â\x80\x99': '\u2019', # right single quote  '
-        'â\x80\x98': '\u2018', # left single quote   '
-        'â€™': '\u2019',       # right single quote variant
-        'â€˜': '\u2018',       # left single quote variant
-        'â\x80\x9c': '\u201c', # left double quote   "
-        'â\x80\x9d': '\u201d', # right double quote  "
-        'â€œ': '\u201c',       # left double quote variant
-        'â€\x9d': '\u201d',    # right double quote variant
-        # Turkish characters
-        'Ã¶': 'ö', 'Ãœ': 'Ü', 'Ã¼': 'ü', 'Ã–': 'Ö',
-        'Ã§': 'ç', 'Ã‡': 'Ç', 'ÅŸ': 'ş', 'Åž': 'Ş',
-        'ÄŸ': 'ğ', 'Äž': 'Ğ', 'Ä±': 'ı', 'Ä°': 'İ',
-        # Latin / Hungarian characters
-        'Ã¡': 'á', 'Ã': 'Á', 'Ã©': 'é', 'Ã‰': 'É',
-        'Ã­': 'í', 'Ã': 'Í', 'Ã³': 'ó', 'Ã"': 'Ó',
-        'Ã±': 'ñ', 'Ã¤': 'ä', 'Ã¸': 'ø', 'Ã¥': 'å',
-        "Å'": 'ő', 'Å"': 'Ő', 'Å±': 'ű', 'Å°': 'Ű',
-        # Common punctuation
-        'Â¿': '¿', 'Â¡': '¡', 'Ã ': 'à', 'Â·': '·',
-        # Common proper-name mojibake (history content)
-        'GÃ¶bekli': 'Göbekli', 'GÃ¶beklitepe': 'Göbeklitepe',
-        'MohÃ¡cs': 'Mohács', 'SÃ¼leyman': 'Süleyman',
-        'ZÃ¡polya': 'Zápolya', 'BÃ¡thory': 'Báthory',
-        'JÃ¡nos': 'János',
-    }
-    for bad, good in mojibake_map.items():
-        text = text.replace(bad, good)
-    # Catch-all: â followed by two continuation bytes = broken UTF-8 sequence
-    text = re.sub(r'â[\x80-\xbf][\x80-\xbf]', '—', text)
-    text = re.sub(r'â□+', '—', text)
-    # Bare â with no continuation bytes (e.g. "hyper-detailed" → "hyperâdetailed")
-    # This happens when UTF-8 continuation bytes are silently dropped.
+    # ── Full mojibake fix using re-encoding trick (covers ALL variants) ────────
+    def _fix_seq(m):
+        """Re-encode a mojibake sequence via Latin-1 → UTF-8."""
+        s = m.group(0)
+        try:
+            return s.encode('latin-1').decode('utf-8')
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            return s
+
+    # Layer 1: Ã + continuation byte — covers all Latin-1 Supplement chars
+    # (à á â ã ä å æ ç è é ê ë ì í î ï ð ñ ò ó ô õ ö ø ù ú û ü ý þ ÿ + capitals)
+    text = re.sub(r'Ã[\x80-\xbf]', _fix_seq, text)
+    # Layer 2: Å + continuation byte — covers Latin Extended-A (ő ű ş Ş ğ Ğ ı İ etc.)
+    text = re.sub(r'Å[\x80-\xbf]', _fix_seq, text)
+    # Layer 3: Ä + continuation byte — covers more Latin Extended-A (ā–ŀ range)
+    text = re.sub(r'Ä[\x80-\xbf]', _fix_seq, text)
+    # Layer 4: â + TWO continuation bytes — em-dash, en-dash, smart quotes, etc.
+    text = re.sub(r'â[\x80-\xbf][\x80-\xbf]', _fix_seq, text)
+    # Layer 5: Windows-1252 variants (€=0x80 in Win-1252, not valid Latin-1)
+    for _bad, _good in [
+        ('â€"', '—'), ('â€"', '–'),
+        ('â€™', '\u2019'), ('â€˜', '\u2018'),
+        ('â€œ', '\u201c'), ('â€\x9d', '\u201d'),
+        ('â€¦', '…'), ('â€¢', '•'), ('â□□', '—'), ('â□+', '—'),
+    ]:
+        text = text.replace(_bad, _good)
+    # Layer 6: bare â — continuation bytes silently dropped
     text = text.replace('â', '-')
+
+    # ── Expression spam cleanup ───────────────────────────────────────────────
+    text = clean_expression_spam(text)
 
     # Clean up leading/trailing whitespace
     return text.strip()
+
+
+def clean_expression_spam(text: str) -> str:
+    """Remove misused 'Expression:' tags that describe non-facial content.
+
+    'Expression:' must ONLY describe a character's facial expression or body
+    language. Tags applied to scene mood, camera, palette, or abstract ideas
+    are stripped — their content is kept but the 'Expression:' prefix is removed.
+    """
+    if 'Expression:' not in text and 'expression:' not in text:
+        return text
+
+    # Keywords that legitimately belong after 'Expression:'
+    FACIAL_KEYWORDS = {
+        'eyes', 'eye', 'jaw', 'mouth', 'lips', 'lip', 'brow', 'forehead',
+        'gaze', 'stare', 'smile', 'frown', 'scowl', 'sneer', 'grimace',
+        'wince', 'glare', 'weep', 'cry', 'laugh', 'smirk', 'snarl',
+        'squint', 'determined', 'fearful', 'fierce', 'solemn', 'stoic',
+        'defiant', 'terrified', 'anguish', 'serene', 'contempt', 'resolute',
+        'hunched', 'posture', 'stance', 'kneel', 'cower', 'tremble', 'trembling',
+        'clench', 'clenched', 'furrow', 'furrowed', 'narrow', 'narrowed',
+        'wide', 'cold', 'calculating', 'thin-lipped', 'downcast', 'sovereign',
+        'proud', 'haughty', 'hollow', 'vacant', 'intense', 'piercing',
+        'raised eyebrow', 'open mouth', 'closed eyes', 'tear', 'tears',
+        'set jaw', 'hard jaw', 'tight lips', 'parted lips', 'pressed lips',
+    }
+
+    # Tokens that indicate non-facial misuse
+    NON_FACIAL_INDICATORS = {
+        'palette', 'color', 'colour', 'camera', 'pan', 'zoom', 'sweep',
+        'absence', 'vacuum', 'void', 'era', 'epoch', 'symboliz', 'represent',
+        'fracture', 'defeat as', 'loss as', 'desaturated', 'muted tone',
+        'the scene', 'the battle', 'the frame', 'the image', 'the moment',
+        'the end', 'no king', 'abandoned', 'empty throne', 'scattered weapon',
+    }
+
+    def _is_facial(content: str) -> bool:
+        lower = content.lower()
+        if any(kw in lower for kw in NON_FACIAL_INDICATORS):
+            return False
+        return any(kw in lower for kw in FACIAL_KEYWORDS)
+
+    # Split on 'Expression:' (case-insensitive), process each segment
+    parts = re.split(r'(?i)(Expression:\s*)', text)
+    if len(parts) <= 1:
+        return text
+
+    result_parts = [parts[0]]  # text before first Expression:
+    expression_count = 0
+
+    i = 1
+    while i < len(parts):
+        tag   = parts[i]       # the "Expression: " token
+        if i + 1 < len(parts):
+            content = parts[i + 1]  # text that follows
+        else:
+            content = ''
+
+        # Extract first clause (up to comma/semicolon/newline) for keyword check
+        first_clause = re.split(r'[,;\n]', content)[0] if content else ''
+
+        if expression_count < 2 and _is_facial(first_clause):
+            result_parts.append(tag)   # keep Expression: prefix
+            expression_count += 1
+        # else: drop the "Expression:" prefix, keep the content below
+
+        result_parts.append(content)
+        i += 2
+
+    result = ''.join(result_parts)
+    # Clean up double commas or spaces left behind
+    result = re.sub(r',\s*,', ',', result)
+    result = re.sub(r'[ \t]{2,}', ' ', result)
+    return result.strip()
 
 
 def validate_prompt_count(prompts_list: list[dict], total_expected: int) -> dict:
